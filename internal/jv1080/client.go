@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go-jv-1080/internal/midi"
+	"go-jv-1080/internal/midi/controlchange"
 	"go-jv-1080/internal/midi/message"
 )
 
@@ -56,10 +57,7 @@ func (c *Client) Identity() (message.IdentityReply, error) {
 // patch on the given channel (0-15).
 func (c *Client) SelectPatch(channel uint8, bank Bank, number int) error {
 	msb, lsb := bank.bankSelect()
-	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: message.ControllerBankSelectMSB, Value: msb}); err != nil {
-		return err
-	}
-	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: message.ControllerBankSelectLSB, Value: lsb}); err != nil {
+	if err := c.dev.SendMessage(controlchange.NewBankSelect(channel, msb, lsb)); err != nil {
 		return err
 	}
 	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 128) - 1)})
@@ -69,10 +67,7 @@ func (c *Client) SelectPatch(channel uint8, bank Bank, number int) error {
 // performance on the control channel (0-15).
 func (c *Client) SelectPerformance(channel uint8, bank Bank, number int) error {
 	msb, lsb := bank.performanceBankSelect()
-	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: message.ControllerBankSelectMSB, Value: msb}); err != nil {
-		return err
-	}
-	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: message.ControllerBankSelectLSB, Value: lsb}); err != nil {
+	if err := c.dev.SendMessage(controlchange.NewBankSelect(channel, msb, lsb)); err != nil {
 		return err
 	}
 	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 32) - 1)})

@@ -1,6 +1,12 @@
-package message
+// Package controlchange provides the control change message and typed
+// structs for the known control change controllers.
+package controlchange
 
-import "fmt"
+import (
+	"fmt"
+
+	"go-jv-1080/internal/midi/message"
+)
 
 // ControlChange is a channel voice control change message (Bn cc vv).
 type ControlChange struct {
@@ -26,7 +32,7 @@ func (m ControlChange) String() string {
 // ParseControlChange parses a control change message from its wire bytes.
 func ParseControlChange(b []byte) (ControlChange, error) {
 	if len(b) < 3 {
-		return ControlChange{}, ErrShortMessage
+		return ControlChange{}, message.ErrShortMessage
 	}
 	if b[0]&0xF0 != 0xB0 {
 		return ControlChange{}, fmt.Errorf("midi: not a control change message: % X", b)

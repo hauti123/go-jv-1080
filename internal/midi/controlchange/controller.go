@@ -1,4 +1,4 @@
-package message
+package controlchange
 
 // Controller is a MIDI control change controller number (0-127).
 type Controller uint8

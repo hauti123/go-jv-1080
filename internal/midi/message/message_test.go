@@ -110,15 +110,6 @@ func TestIdentityRequestReply(t *testing.T) {
 }
 
 func TestChannelMessagesRoundTrip(t *testing.T) {
-	cc := ControlChange{Channel: 0, Controller: 0, Value: 0x50}
-	if got := cc.Bytes(); !bytes.Equal(got, []byte{0xB0, 0x00, 0x50}) {
-		t.Errorf("CC Bytes = % X", got)
-	}
-	cc2, err := ParseControlChange(cc.Bytes())
-	if err != nil || cc2 != cc {
-		t.Errorf("CC round trip = %+v, %v", cc2, err)
-	}
-
 	pc := ProgramChange{Channel: 9, Program: 40}
 	if got := pc.Bytes(); !bytes.Equal(got, []byte{0xC9, 0x28}) {
 		t.Errorf("PC Bytes = % X", got)

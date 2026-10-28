@@ -1,4 +1,4 @@
-package message
+package controlchange
 
 // SwitchValue is the value of a MIDI switch controller (pedals, portamento
 // switch, ...): 0-63 = off, 64-127 = on.

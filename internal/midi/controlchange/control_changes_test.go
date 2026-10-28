@@ -1,8 +1,10 @@
-package message
+package controlchange
 
 import (
 	"bytes"
 	"testing"
+
+	"go-jv-1080/internal/midi/message"
 )
 
 func TestControlChangeConstructor(t *testing.T) {
@@ -23,7 +25,7 @@ func TestControlChangeConstructor(t *testing.T) {
 func TestTypedControlChanges(t *testing.T) {
 	cases := []struct {
 		name string
-		msg  Message
+		msg  message.Message
 		want []byte
 	}{
 		{"BankSelect", NewBankSelect(0, 0x50, 0x00), []byte{0xB0, 0x00, 0x50, 0xB0, 0x20, 0x00}},
@@ -116,29 +118,29 @@ func TestControllerString(t *testing.T) {
 }
 
 func TestExistingConstructors(t *testing.T) {
-	if got := NewProgramChange(9, 40).Bytes(); !bytes.Equal(got, []byte{0xC9, 0x28}) {
+	if got := message.NewProgramChange(9, 40).Bytes(); !bytes.Equal(got, []byte{0xC9, 0x28}) {
 		t.Errorf("NewProgramChange Bytes = % X", got)
 	}
-	if got := NewNoteOn(0, 60, 100).Bytes(); !bytes.Equal(got, []byte{0x90, 60, 100}) {
+	if got := message.NewNoteOn(0, 60, 100).Bytes(); !bytes.Equal(got, []byte{0x90, 60, 100}) {
 		t.Errorf("NewNoteOn Bytes = % X", got)
 	}
-	if got := NewNoteOff(0, 60).Bytes(); !bytes.Equal(got, []byte{0x90, 60, 0}) {
+	if got := message.NewNoteOff(0, 60).Bytes(); !bytes.Equal(got, []byte{0x90, 60, 0}) {
 		t.Errorf("NewNoteOff Bytes = % X", got)
 	}
-	if got := NewIdentityRequest(0x10).Bytes(); !bytes.Equal(got, []byte{0xF0, 0x7E, 0x10, 0x06, 0x01, 0xF7}) {
+	if got := message.NewIdentityRequest(0x10).Bytes(); !bytes.Equal(got, []byte{0xF0, 0x7E, 0x10, 0x06, 0x01, 0xF7}) {
 		t.Errorf("NewIdentityRequest Bytes = % X", got)
 	}
-	addr := NewAddress(0x03, 0x00, 0x10, 0x00)
-	if got := NewDataRequest(0x10, addr, 1).Bytes(); !bytes.Equal(got, []byte{0xF0, 0x41, 0x10, 0x6A, 0x11, 0x03, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x6C, 0xF7}) {
+	addr := message.NewAddress(0x03, 0x00, 0x10, 0x00)
+	if got := message.NewDataRequest(0x10, addr, 1).Bytes(); !bytes.Equal(got, []byte{0xF0, 0x41, 0x10, 0x6A, 0x11, 0x03, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x6C, 0xF7}) {
 		t.Errorf("NewDataRequest Bytes = % X", got)
 	}
-	ds := NewDataSet(0x10, addr, []byte{0x00})
+	ds := message.NewDataSet(0x10, addr, []byte{0x00})
 	if got := ds.Bytes(); !bytes.Equal(got, []byte{0xF0, 0x41, 0x10, 0x6A, 0x12, 0x03, 0x00, 0x10, 0x00, 0x00, 0x6D, 0xF7}) {
 		t.Errorf("NewDataSet Bytes = % X", got)
 	}
 	// NewDataSet copies the data slice.
 	data := []byte{0x01}
-	ds = NewDataSet(0x10, addr, data)
+	ds = message.NewDataSet(0x10, addr, data)
 	data[0] = 0x02
 	if ds.Data[0] != 0x01 {
 		t.Error("NewDataSet should copy the data slice")
