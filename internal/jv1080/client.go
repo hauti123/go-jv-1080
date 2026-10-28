@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go-jv-1080/internal/midi"
+	"go-jv-1080/internal/midi/message"
 )
 
 // DefaultTimeout is the default time to wait for the device to answer a
@@ -34,20 +35,20 @@ func (c *Client) SetTimeout(d time.Duration) { c.timeout = d }
 func (c *Client) DeviceID() uint8 { return c.deviceID }
 
 // request sends an RQ1 and waits for the DT1 answer.
-func (c *Client) request(addr midi.Address, size int) (midi.DataSet, error) {
-	req := midi.DataRequest{DeviceID: c.deviceID, Address: addr, Size: size}
-	return c.dev.Request(req, c.timeout, func(ds midi.DataSet) bool {
+func (c *Client) request(addr message.Address, size int) (message.DataSet, error) {
+	req := message.DataRequest{DeviceID: c.deviceID, Address: addr, Size: size}
+	return c.dev.Request(req, c.timeout, func(ds message.DataSet) bool {
 		return len(ds.Data) == size
 	})
 }
 
 // sendDataSet writes a data block to the device.
-func (c *Client) sendDataSet(addr midi.Address, data []byte) error {
-	return c.dev.SendMessage(midi.DataSet{DeviceID: c.deviceID, Address: addr, Data: data})
+func (c *Client) sendDataSet(addr message.Address, data []byte) error {
+	return c.dev.SendMessage(message.DataSet{DeviceID: c.deviceID, Address: addr, Data: data})
 }
 
 // Identity sends an identity request and returns the device's reply.
-func (c *Client) Identity() (midi.IdentityReply, error) {
+func (c *Client) Identity() (message.IdentityReply, error) {
 	return c.dev.RequestIdentity(c.deviceID, c.timeout)
 }
 
@@ -55,26 +56,26 @@ func (c *Client) Identity() (midi.IdentityReply, error) {
 // patch on the given channel (0-15).
 func (c *Client) SelectPatch(channel uint8, bank Bank, number int) error {
 	msb, lsb := bank.bankSelect()
-	if err := c.dev.SendMessage(midi.ControlChange{Channel: channel, Controller: 0, Value: msb}); err != nil {
+	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: 0, Value: msb}); err != nil {
 		return err
 	}
-	if err := c.dev.SendMessage(midi.ControlChange{Channel: channel, Controller: 32, Value: lsb}); err != nil {
+	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: 32, Value: lsb}); err != nil {
 		return err
 	}
-	return c.dev.SendMessage(midi.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 128) - 1)})
+	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 128) - 1)})
 }
 
 // SelectPerformance sends bank select and program change to select a
 // performance on the control channel (0-15).
 func (c *Client) SelectPerformance(channel uint8, bank Bank, number int) error {
 	msb, lsb := bank.performanceBankSelect()
-	if err := c.dev.SendMessage(midi.ControlChange{Channel: channel, Controller: 0, Value: msb}); err != nil {
+	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: 0, Value: msb}); err != nil {
 		return err
 	}
-	if err := c.dev.SendMessage(midi.ControlChange{Channel: channel, Controller: 32, Value: lsb}); err != nil {
+	if err := c.dev.SendMessage(message.ControlChange{Channel: channel, Controller: 32, Value: lsb}); err != nil {
 		return err
 	}
-	return c.dev.SendMessage(midi.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 32) - 1)})
+	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 32) - 1)})
 }
 
 // ReadPatch reads a single patch into the patch-mode temporary patch
@@ -236,7 +237,7 @@ const maxDataSetBytes = 128
 
 // writeBlock writes a block of data, splitting it into DT1 packets of at
 // most 128 data bytes with a 20 ms interval between them.
-func (c *Client) writeBlock(addr midi.Address, data []byte) error {
+func (c *Client) writeBlock(addr message.Address, data []byte) error {
 	for off := 0; off < len(data); off += maxDataSetBytes {
 		end := off + maxDataSetBytes
 		if end > len(data) {
@@ -296,13 +297,13 @@ func (c *Client) StorePerformance(number int, p *Performance) error {
 // block. value holds the raw parameter bytes (one byte, or two nibbles for
 // nibblized parameters such as the wave number).
 func (c *Client) SetPatchParameter(bank Bank, number int, block string, tone int, offset int, value []byte) error {
-	var area midi.Address
+	var area message.Address
 	if bank == BankUser {
 		area = userPatchArea(number)
 	} else {
 		area = TemporaryPatchArea()
 	}
-	var addr midi.Address
+	var addr message.Address
 	switch block {
 	case "common":
 		addr = area.Add(offset)
@@ -322,7 +323,7 @@ func (c *Client) SetPatchParameter(bank Bank, number int, block string, tone int
 // (1-16, 0 for common) and byte offset within the block.
 func (c *Client) SetPerformanceParameter(number int, block string, part int, offset int, value []byte) error {
 	area := userPerformanceArea(number)
-	var addr midi.Address
+	var addr message.Address
 	switch block {
 	case "common":
 		addr = area.Add(offset)
@@ -340,10 +341,10 @@ func (c *Client) SetPerformanceParameter(number int, block string, part int, off
 
 // NoteOn sends a note on message.
 func (c *Client) NoteOn(channel uint8, note, velocity uint8) error {
-	return c.dev.SendMessage(midi.NoteOn{Channel: channel, Note: note, Velocity: velocity})
+	return c.dev.SendMessage(message.NoteOn{Channel: channel, Note: note, Velocity: velocity})
 }
 
 // NoteOff sends a note off message (as note on with velocity 0).
 func (c *Client) NoteOff(channel uint8, note uint8) error {
-	return c.dev.SendMessage(midi.NoteOn{Channel: channel, Note: note, Velocity: 0})
+	return c.dev.SendMessage(message.NoteOn{Channel: channel, Note: note, Velocity: 0})
 }

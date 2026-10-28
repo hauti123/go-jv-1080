@@ -2,7 +2,7 @@
 // client on top of the internal/midi transport layer.
 package jv1080
 
-import "go-jv-1080/internal/midi"
+import "go-jv-1080/internal/midi/message"
 
 // Memory areas (first address byte) of the JV-1080 parameter address map.
 const (
@@ -151,13 +151,13 @@ func (b Bank) performanceBankSelect() (msb, lsb uint8) {
 
 // patchArea returns the 4-byte address of the patch with the given number
 // (1-128) in the given bank.
-func (b Bank) patchArea(number int) midi.Address {
+func (b Bank) patchArea(number int) message.Address {
 	n := number - 1
 	switch b {
 	case BankUser:
-		return midi.Address{areaUserPatch, byte(n), 0x00, 0x00}
+		return message.Address{areaUserPatch, byte(n), 0x00, 0x00}
 	case BankCardA, BankCardB:
-		return midi.Address{areaCardPatch, byte(n), 0x00, 0x00}
+		return message.Address{areaCardPatch, byte(n), 0x00, 0x00}
 	}
 	// Preset, GM and expansion banks are read-only on the device and are
 	// not part of the writable address map; they are addressed through the
@@ -166,55 +166,55 @@ func (b Bank) patchArea(number int) midi.Address {
 }
 
 // userPatchArea returns the address of a user patch (number 1-128).
-func userPatchArea(number int) midi.Address {
-	return midi.Address{areaUserPatch, byte(number - 1), 0x00, 0x00}
+func userPatchArea(number int) message.Address {
+	return message.Address{areaUserPatch, byte(number - 1), 0x00, 0x00}
 }
 
 // userPerformanceArea returns the address of a user performance (1-32).
-func userPerformanceArea(number int) midi.Address {
-	return midi.Address{areaUserPerformance, byte(number - 1), 0x00, 0x00}
+func userPerformanceArea(number int) message.Address {
+	return message.Address{areaUserPerformance, byte(number - 1), 0x00, 0x00}
 }
 
 // TemporaryPatchArea returns the address of the patch-mode temporary patch.
-func TemporaryPatchArea() midi.Address {
-	return midi.Address{areaPatchModeTemporaryPatch, 0x00, 0x00, 0x00}
+func TemporaryPatchArea() message.Address {
+	return message.Address{areaPatchModeTemporaryPatch, 0x00, 0x00, 0x00}
 }
 
 // TemporaryPerformanceArea returns the address of the temporary performance.
-func TemporaryPerformanceArea() midi.Address {
-	return midi.Address{areaTemporaryPerformance, 0x00, 0x00, 0x00}
+func TemporaryPerformanceArea() message.Address {
+	return message.Address{areaTemporaryPerformance, 0x00, 0x00, 0x00}
 }
 
 // performancePartArea returns the address of performance part p (1-16) of
 // the temporary performance.
-func performancePartArea(p int) midi.Address {
-	return midi.Address{areaTemporaryPerformance, 0x00, byte(0x10 + (p - 1)), 0x00}
+func performancePartArea(p int) message.Address {
+	return message.Address{areaTemporaryPerformance, 0x00, byte(0x10 + (p - 1)), 0x00}
 }
 
 // patchToneArea returns the address of tone t (1-4) within a patch area.
-func patchToneArea(area midi.Address, t int) midi.Address {
-	return midi.Address{area[0], area[1], byte(toneBaseOffsets[t-1]), 0x00}
+func patchToneArea(area message.Address, t int) message.Address {
+	return message.Address{area[0], area[1], byte(toneBaseOffsets[t-1]), 0x00}
 }
 
 // patchCommonBlock returns the address and size of a patch's common block.
-func patchCommonBlock(area midi.Address) (midi.Address, int) {
+func patchCommonBlock(area message.Address) (message.Address, int) {
 	return area, PatchCommonSize
 }
 
 // patchToneBlock returns the address and size of tone t (1-4) of a patch.
-func patchToneBlock(area midi.Address, t int) (midi.Address, int) {
+func patchToneBlock(area message.Address, t int) (message.Address, int) {
 	return patchToneArea(area, t), PatchToneSize
 }
 
 // performanceCommonBlock returns the address and size of a performance's
 // common block.
-func performanceCommonBlock(area midi.Address) (midi.Address, int) {
+func performanceCommonBlock(area message.Address) (message.Address, int) {
 	return area, PerformanceCommonSize
 }
 
 // performancePartBlock returns the address and size of part p (1-16) of a
 // performance. Part p lives at third address byte 0x10 + (p - 1); the
 // address value is (0x10 + (p - 1)) * 0x80 relative to the area base.
-func performancePartBlock(area midi.Address, p int) (midi.Address, int) {
+func performancePartBlock(area message.Address, p int) (message.Address, int) {
 	return area.Add((0x10 + (p - 1)) * 0x80), PerformancePartSize
 }

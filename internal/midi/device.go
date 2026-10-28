@@ -7,6 +7,8 @@ import (
 
 	"gitlab.com/gomidi/midi/v2/drivers"
 	_ "gitlab.com/gomidi/midi/v2/drivers/rtmididrv" // registers the rtmidi driver
+
+	"go-jv-1080/internal/midi/message"
 )
 
 // PortInfo describes an available MIDI input or output port.
@@ -134,7 +136,7 @@ func (d *Device) Send(msg []byte) error {
 }
 
 // SendMessage serializes msg and sends it to the device.
-func (d *Device) SendMessage(msg Message) error {
+func (d *Device) SendMessage(msg message.Message) error {
 	return d.Send(msg.Bytes())
 }
 
@@ -143,10 +145,10 @@ func (d *Device) SendMessage(msg Message) error {
 // timeout. The match function decides whether an incoming DT1 is the
 // expected answer; when nil, the first DT1 for the requested address is
 // accepted.
-func (d *Device) Request(req DataRequest, timeout time.Duration, match func(DataSet) bool) (DataSet, error) {
-	result := make(chan DataSet, 1)
+func (d *Device) Request(req message.DataRequest, timeout time.Duration, match func(message.DataSet) bool) (message.DataSet, error) {
+	result := make(chan message.DataSet, 1)
 	unregister := d.RegisterCallback(func(raw []byte) {
-		ds, err := ParseDataSet(raw)
+		ds, err := message.ParseDataSet(raw)
 		if err != nil {
 			return
 		}
@@ -163,22 +165,22 @@ func (d *Device) Request(req DataRequest, timeout time.Duration, match func(Data
 	})
 	defer unregister()
 	if err := d.SendMessage(req); err != nil {
-		return DataSet{}, err
+		return message.DataSet{}, err
 	}
 	select {
 	case ds := <-result:
 		return ds, nil
 	case <-time.After(timeout):
-		return DataSet{}, fmt.Errorf("midi: timeout waiting for answer to %s", req)
+		return message.DataSet{}, fmt.Errorf("midi: timeout waiting for answer to %s", req)
 	}
 }
 
 // RequestIdentity sends a universal identity request and waits for the
 // identity reply.
-func (d *Device) RequestIdentity(deviceID uint8, timeout time.Duration) (IdentityReply, error) {
-	result := make(chan IdentityReply, 1)
+func (d *Device) RequestIdentity(deviceID uint8, timeout time.Duration) (message.IdentityReply, error) {
+	result := make(chan message.IdentityReply, 1)
 	unregister := d.RegisterCallback(func(raw []byte) {
-		reply, err := ParseIdentityReply(raw)
+		reply, err := message.ParseIdentityReply(raw)
 		if err != nil {
 			return
 		}
@@ -191,14 +193,14 @@ func (d *Device) RequestIdentity(deviceID uint8, timeout time.Duration) (Identit
 		}
 	})
 	defer unregister()
-	if err := d.SendMessage(IdentityRequest{DeviceID: deviceID}); err != nil {
-		return IdentityReply{}, err
+	if err := d.SendMessage(message.IdentityRequest{DeviceID: deviceID}); err != nil {
+		return message.IdentityReply{}, err
 	}
 	select {
 	case r := <-result:
 		return r, nil
 	case <-time.After(timeout):
-		return IdentityReply{}, fmt.Errorf("midi: timeout waiting for identity reply from device %02X", deviceID)
+		return message.IdentityReply{}, fmt.Errorf("midi: timeout waiting for identity reply from device %02X", deviceID)
 	}
 }
 
