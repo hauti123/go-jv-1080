@@ -6,6 +6,11 @@ import "fmt"
 // holding 7 bits.
 type Address [4]byte
 
+// NewAddress returns a Roland 4-byte address from its four bytes.
+func NewAddress(b0, b1, b2, b3 uint8) Address {
+	return Address{b0, b1, b2, b3}
+}
+
 // Addr returns the address as a single number.
 func (a Address) Addr() int {
 	return ((int(a[0])*128+int(a[1]))*128+int(a[2]))*128 + int(a[3])

@@ -8,6 +8,11 @@ type IdentityRequest struct {
 	DeviceID uint8 // 0x10 for the JV-1080, 0x7F for broadcast
 }
 
+// NewIdentityRequest returns an identity request for the given device.
+func NewIdentityRequest(deviceID uint8) IdentityRequest {
+	return IdentityRequest{DeviceID: deviceID}
+}
+
 // Bytes serializes the message to its wire representation.
 func (m IdentityRequest) Bytes() []byte {
 	return []byte{SysExStart, 0x7E, m.DeviceID & 0x7F, 0x06, 0x01, SysExEnd}
@@ -27,6 +32,11 @@ type IdentityReply struct {
 	FamilyCode   uint16
 	FamilyNumber uint16
 	Revision     [4]uint8
+}
+
+// NewIdentityReply returns an identity reply.
+func NewIdentityReply(deviceID, manufacturer uint8, familyCode, familyNumber uint16, revision [4]uint8) IdentityReply {
+	return IdentityReply{DeviceID: deviceID, Manufacturer: manufacturer, FamilyCode: familyCode, FamilyNumber: familyNumber, Revision: revision}
 }
 
 // Bytes serializes the message to its wire representation.

@@ -9,6 +9,12 @@ type DataSet struct {
 	Data     []byte
 }
 
+// NewDataSet returns a data set message writing Data at Address. The data
+// slice is copied.
+func NewDataSet(deviceID uint8, address Address, data []byte) DataSet {
+	return DataSet{DeviceID: deviceID, Address: address, Data: append([]byte{}, data...)}
+}
+
 // Bytes serializes the message to its wire representation.
 func (m DataSet) Bytes() []byte {
 	body := append([]byte{}, m.Address[:]...)

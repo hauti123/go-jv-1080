@@ -10,6 +10,11 @@ type DataRequest struct {
 	Size     int
 }
 
+// NewDataRequest returns a data request for Size bytes at Address.
+func NewDataRequest(deviceID uint8, address Address, size int) DataRequest {
+	return DataRequest{DeviceID: deviceID, Address: address, Size: size}
+}
+
 // Bytes serializes the message to its wire representation.
 func (m DataRequest) Bytes() []byte {
 	size := AddressFromInt(m.Size)

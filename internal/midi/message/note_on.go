@@ -10,6 +10,16 @@ type NoteOn struct {
 	Velocity uint8 // 0-127
 }
 
+// NewNoteOn returns a note on message.
+func NewNoteOn(channel, note, velocity uint8) NoteOn {
+	return NoteOn{Channel: channel, Note: note, Velocity: velocity}
+}
+
+// NewNoteOff returns a note off message (a note on with velocity 0).
+func NewNoteOff(channel, note uint8) NoteOn {
+	return NoteOn{Channel: channel, Note: note, Velocity: 0}
+}
+
 // Bytes serializes the message to its wire representation.
 func (m NoteOn) Bytes() []byte {
 	return []byte{0x90 | (m.Channel & 0x0F), m.Note & 0x7F, m.Velocity & 0x7F}

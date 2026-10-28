@@ -8,6 +8,11 @@ type ProgramChange struct {
 	Program uint8 // 0-127
 }
 
+// NewProgramChange returns a program change message.
+func NewProgramChange(channel, program uint8) ProgramChange {
+	return ProgramChange{Channel: channel, Program: program}
+}
+
 // Bytes serializes the message to its wire representation.
 func (m ProgramChange) Bytes() []byte {
 	return []byte{0xC0 | (m.Channel & 0x0F), m.Program & 0x7F}
