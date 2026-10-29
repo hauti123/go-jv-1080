@@ -279,7 +279,7 @@ $report.Add("| command | value |")
 $report.Add("| --- | --- |")
 foreach ($row in $rows) {
     $valueText = "$($row.Value)" -replace "\|", "\\|"
-    $report.Add("| {0} | {1} |" -f $row.Command, $valueText)
+    $report.Add(("| {0} | {1} |" -f $row.Command, $valueText))
 }
 Set-Content -Path $ReportFile -Value ($report -join "`n") -Encoding UTF8
 
