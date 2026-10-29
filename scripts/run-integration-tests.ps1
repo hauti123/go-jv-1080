@@ -30,15 +30,14 @@
     User patch slot the store tests write to (default 128). The original
     content is restored after the test.
 
-.PARAMETER Detailed
-    Pass -v to go test. (Named -Detailed because -Verbose is already a
-    common parameter added by CmdletBinding.)
+.PARAMETER Verbose
+    Common parameter (added by CmdletBinding): also passes -v to go test.
 
 .EXAMPLE
     .\scripts\run-integration-tests.ps1 -Out "JV-1080" -In "JV-1080"
 
 .EXAMPLE
-    .\scripts\run-integration-tests.ps1 -OutNum 1 -InNum 1 -DeviceId 10 -Detailed
+    .\scripts\run-integration-tests.ps1 -OutNum 1 -InNum 1 -DeviceId 10 -Verbose
 #>
 [CmdletBinding()]
 param(
@@ -47,9 +46,7 @@ param(
     [int]$OutNum = 0,
     [int]$InNum = 0,
     [string]$DeviceId = "10",
-    [int]$TestPatch = 128,
-    [Alias("v")]
-    [switch]$Detailed
+    [int]$TestPatch = 128
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,7 +64,7 @@ try {
 
     Write-Host "Running integration tests against JV-1080 (device ID 0x$DeviceId, test patch $TestPatch)..."
     $goArgs = @("test", "-run", "Integration")
-    if ($Detailed) { $goArgs = @("test", "-v", "-run", "Integration") }
+    if ($Verbose) { $goArgs = @("test", "-v", "-run", "Integration") }
     $goArgs += "./..."
     & go @goArgs
     if ($LASTEXITCODE -ne 0) {
