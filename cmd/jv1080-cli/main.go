@@ -15,19 +15,16 @@
 //	-innum int    MIDI input port number, used when -in is empty (default 0)
 //	-devid string device ID in hex (default "10" = unit 17)
 //
-// Commands:
+// Commands (run "jv1080-cli help" for the full list):
 //
 //	set panelmode <patch|performance|gm|1|2|3>
-//	set patch <bank> <number>          bank: user, pr-a, pr-b, pr-c, gm, card-a, ...
-//	set common <param> <value...>       patch common parameter (temp patch)
-//	set tone <n> <param> <value...>     patch tone parameter (temp patch)
-//	set wave <param> <value...>         wave parameters (tone 1 of temp patch)
-//	set tvf <param> <value...>          TVF parameters (tone 1 of temp patch)
-//	set address <hi> <lo> <value...>    write raw bytes to address hi lo
-//	read address <hi> <lo> [size]       read raw bytes from address hi lo
-//	read common <param>                 read a patch common parameter
-//	read tone <n> <param>               read a patch tone parameter
-//	note <name...>                      play notes (500 ms, full velocity, 500 ms pause)
+//	set patch select <bank> <number>
+//	set patch common|tone|wave|tvf <param> <value...>
+//	set address <hi> <lo> <value...>
+//	get patch common|tone <param>
+//	get address <hi> <lo> [size]
+//	note <name...>
+//	help
 package main
 
 import (
@@ -55,8 +52,13 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: jv1080-cli [flags] <command> [args] (try: set panelmode patch)")
+		fmt.Fprintln(os.Stderr, "usage: jv1080-cli [flags] <command> [args] (try: help)")
 		os.Exit(2)
+	}
+	// help works without a device.
+	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		printHelp()
+		return
 	}
 	dev, err := midi.OpenDevice(*outName, *inName, *outNum, *inNum)
 	if err != nil {
@@ -91,51 +93,139 @@ func run(c *jv1080.Client, args []string) error {
 	switch args[0] {
 	case "set":
 		return runSet(c, args[1:])
-	case "read":
-		return runRead(c, args[1:])
+	case "get":
+		return runGet(c, args[1:])
 	case "note":
 		return runNote(c, args[1:])
+	case "help", "--help", "-h":
+		printHelp()
+		return nil
 	}
-	return fmt.Errorf("unknown command %q (want set, read or note)", args[0])
+	return fmt.Errorf("unknown command %q (want set, get, note or help)", args[0])
 }
 
 func runSet(c *jv1080.Client, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("set what? (panelmode, patch, common, tone, wave, tvf, address)")
+		return fmt.Errorf("set what? (panelmode, patch, address) — try: help")
 	}
 	switch args[0] {
 	case "panelmode":
 		return setPanelMode(c, args[1:])
 	case "patch":
-		return setPatch(c, args[1:])
-	case "common":
-		return setCommon(c, args[1:])
-	case "tone":
-		return setTone(c, args[1:])
-	case "wave":
-		return setWave(c, args[1:])
-	case "tvf":
-		return setTVF(c, args[1:])
+		return runPatch(c, "set", args[1:])
 	case "address":
 		return setAddress(c, args[1:])
 	}
-	return fmt.Errorf("unknown set target %q", args[0])
+	return fmt.Errorf("unknown set target %q (want panelmode, patch or address)", args[0])
 }
 
-func runRead(c *jv1080.Client, args []string) error {
+func runGet(c *jv1080.Client, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("read what? (address, common, tone)")
+		return fmt.Errorf("get what? (patch, address) — try: help")
 	}
 	switch args[0] {
+	case "patch":
+		return runPatch(c, "get", args[1:])
 	case "address":
-		return readAddress(c, args[1:])
-	case "common":
-		return readCommon(c, args[1:])
-	case "tone":
-		return readTone(c, args[1:])
+		return getAddress(c, args[1:])
 	}
-	return fmt.Errorf("unknown read target %q", args[0])
+	return fmt.Errorf("unknown get target %q (want patch or address)", args[0])
 }
+
+// runPatch dispatches the patch related subcommands: select a patch
+// (set patch <bank> <number>) or manipulate/read patch parameters
+// (set/get patch common|tone|wave|tvf ...).
+func runPatch(c *jv1080.Client, verb string, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("%s patch what? (select, common, tone, wave, tvf) — try: help", verb)
+	}
+	switch args[0] {
+	case "select":
+		if verb != "set" {
+			return fmt.Errorf("usage: set patch select <bank> <number>")
+		}
+		return setPatch(c, args[1:])
+	case "common":
+		if verb == "set" {
+			return setCommon(c, args[1:])
+		}
+		return getCommon(c, args[1:])
+	case "tone":
+		if verb == "set" {
+			return setTone(c, args[1:])
+		}
+		return getTone(c, args[1:])
+	case "wave":
+		if verb == "set" {
+			return setWave(c, args[1:])
+		}
+		return fmt.Errorf("get patch wave is not implemented (wave number is nibblized; use: get patch tone 1 wave)")
+	case "tvf":
+		if verb == "set" {
+			return setTVF(c, args[1:])
+		}
+		return fmt.Errorf("get patch tvf is not implemented (use: get patch tone 1 cutoff)")
+	}
+	return fmt.Errorf("unknown patch target %q (want select, common, tone, wave, tvf)", args[0])
+}
+
+// printHelp displays all implemented commands.
+func printHelp() {
+	fmt.Print(helpText)
+}
+
+const helpText = `jv1080-cli — control a Roland JV-1080 over MIDI
+
+Usage: jv1080-cli [flags] <command> [args]
+
+Flags:
+  -out string    MIDI output port name (default "SERIES 208i MIDI")
+  -in string     MIDI input port name (default "SERIES 208i MIDI")
+  -outnum int    MIDI output port number, used when -out is empty (default 0)
+  -innum int     MIDI input port number, used when -in is empty (default 0)
+  -devid string  device ID in hex (default "10" = unit 17)
+
+Commands:
+  set panelmode <patch|performance|gm|1|2|3>
+        switch the panel mode
+  set patch select <bank> <number>
+        select a patch; bank: user, pr-a, pr-b, pr-c, gm, card-a, card-b,
+        exp-a..d; number 1-128
+  set patch common <param> <value...>
+        set a patch common parameter of the temporary patch
+        (name, efx, level, pan, ...)
+  set patch tone <n> <param> <value...>
+        set a patch tone parameter (tone 1-4): switch, group, groupid,
+        wave, coarse, fine, cutoff, resonance, level, pan, chorus, reverb
+  set patch wave <param> <value...>
+        set a wave parameter of tone 1: group, groupid, number, gain
+  set patch tvf <param> <value...>
+        set a TVF parameter of tone 1: cutoff, resonance, envdepth, or
+        "set patch tvf env <t1> <t2> <t3> <t4> <l1> <l2> <l3> <l4>"
+  set address <hi> <lo> <value...>
+        write raw bytes to the address given as two 16-bit hex numbers
+        (e.g. 0x0000 0x0006 = master tune)
+  get address <hi> <lo> [size]
+        read raw bytes from an address (default size 1)
+  get patch common <param>
+        read a patch common parameter of the temporary patch
+  get patch tone <n> <param>
+        read a patch tone parameter of the temporary patch
+  note <name...>
+        play notes by name (c1 d3 f#2 bb3 ab3 eb3 ...), 500 ms at full
+        velocity with a 500 ms pause between notes
+  help
+        show this help
+
+All messages to and from the device are logged in hex:
+  SEND: [F0 41 10 6A ... F7]
+  REC : [F0 41 10 6A ... F7]
+
+Parameter values may be given in decimal or hex (0x..). Values outside
+the documented range are accepted deliberately, to allow special tests.
+Pan accepts l1..l63, r1..r63 and center; coarse/fine accept signed
+values; the wave number is nibblized and takes two nibble bytes.
+`
 
 // setPanelMode switches the panel mode: patch (1), performance (2) or GM (3).
 func setPanelMode(c *jv1080.Client, args []string) error {
@@ -160,7 +250,7 @@ func setPanelMode(c *jv1080.Client, args []string) error {
 // card-b, exp-a..d) and number (1-128).
 func setPatch(c *jv1080.Client, args []string) error {
 	if len(args) != 2 {
-		return fmt.Errorf("usage: set patch <bank> <number>")
+		return fmt.Errorf("usage: set patch select <bank> <number>")
 	}
 	bank, err := parseBank(args[0])
 	if err != nil {
@@ -298,11 +388,11 @@ func setAddress(c *jv1080.Client, args []string) error {
 	return c.WriteRaw(addr, values)
 }
 
-// readAddress reads size bytes (default 1) from the address given as two
+// getAddress reads size bytes (default 1) from the address given as two
 // 16-bit hex numbers.
-func readAddress(c *jv1080.Client, args []string) error {
+func getAddress(c *jv1080.Client, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: read address <hi> <lo> [size]")
+		return fmt.Errorf("usage: get address <hi> <lo> [size]")
 	}
 	addr, err := parseAddress(args[0], args[1])
 	if err != nil {
@@ -360,10 +450,10 @@ func rawValue(data []byte) int {
 	return int(data[0])
 }
 
-// readCommon reads a patch common parameter of the temporary patch.
-func readCommon(c *jv1080.Client, args []string) error {
+// getCommon reads a patch common parameter of the temporary patch.
+func getCommon(c *jv1080.Client, args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: read common <param>")
+		return fmt.Errorf("usage: get common <param>")
 	}
 	off, size, err := commonParam(args[0])
 	if err != nil {
@@ -377,10 +467,10 @@ func readCommon(c *jv1080.Client, args []string) error {
 	return nil
 }
 
-// readTone reads a patch tone parameter of the temporary patch.
-func readTone(c *jv1080.Client, args []string) error {
+// getTone reads a patch tone parameter of the temporary patch.
+func getTone(c *jv1080.Client, args []string) error {
 	if len(args) != 2 {
-		return fmt.Errorf("usage: read tone <n> <param>")
+		return fmt.Errorf("usage: get tone <n> <param>")
 	}
 	tone, err := strconv.Atoi(args[0])
 	if err != nil || tone < 1 || tone > 4 {
