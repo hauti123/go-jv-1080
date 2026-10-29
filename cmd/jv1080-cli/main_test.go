@@ -216,6 +216,7 @@ func TestParsePatchParams(t *testing.T) {
 		{[]string{"tva", "tone", "2", "biaspoint", "60"}, patchParam{"tone", 2, 0x67, 1, "biaspoint"}},
 		{[]string{"tva", "tone", "3", "env", "t1", "40"}, patchParam{"tone", 3, 0x6E, 1, "t1"}},
 		{[]string{"tva", "env", "l3", "70"}, patchParam{"tone", 1, 0x74, 1, "l3"}},
+		{[]string{"tone", "tone", "3", "keyupper", "100"}, patchParam{"tone", 3, 0x0F, 1, "keyupper"}},
 	}
 	for _, c := range special {
 		cmds, err := parsePatchParams(c.args[0], c.args[1:])
@@ -240,6 +241,8 @@ func TestParsePatchParams(t *testing.T) {
 		{"pitch", "env", "bogus", "1"},
 		{"tvf", "bogus", "1"},
 		{"tva", "env", "l4", "1"}, // TVA env has l1-l3 only
+		{"tone", "tone", "1", "bogus", "1"},
+		{"tone", "tone", "9", "keyupper", "1"},
 	} {
 		if _, err := parsePatchParams(bad[0], bad[1:]); err == nil {
 			t.Errorf("parsePatchParams(%v) should fail", bad)
@@ -259,5 +262,21 @@ func TestParsePatchValues(t *testing.T) {
 	v, err = parsePatchValues(patchParam{"tone", 1, 0x03, 2, "number"}, []string{"0x0C", "0x01"})
 	if err != nil || len(v) != 2 || v[0] != 0x0C || v[1] != 0x01 {
 		t.Errorf("parsePatchValues(number) = % X, %v", v, err)
+	}
+}
+
+func TestScriptReadCommandsResolve(t *testing.T) {
+	if len(scriptReadCommands) == 0 {
+		t.Fatal("no script commands")
+	}
+	for _, cmd := range scriptReadCommands {
+		cmds, err := parsePatchParams(cmd[0], cmd[1:])
+		if err != nil {
+			t.Errorf("parsePatchParams(%v): %v", cmd, err)
+			continue
+		}
+		if len(cmds) != 1 {
+			t.Errorf("parsePatchParams(%v) = %d commands, want 1", cmd, len(cmds))
+		}
 	}
 }

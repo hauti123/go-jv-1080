@@ -134,7 +134,7 @@ func runGet(c *jv1080.Client, args []string) error {
 
 // patchCategories lists the patch edit categories of the Patch Edit Mode
 // (doc/patch-edit-mode-structure.md) accepted after "set/get patch".
-var patchCategories = []string{"common", "efx", "ctrl", "wave", "lfo", "pitch", "tvf", "tva"}
+var patchCategories = []string{"common", "efx", "ctrl", "wave", "lfo", "pitch", "tvf", "tva", "tone"}
 
 // patchCommand is a parsed "set/get patch <category> ..." command: the
 // resolved parameter plus the index of its first value argument.
@@ -212,6 +212,8 @@ func parsePatchParams(cat string, args []string) ([]patchCommand, error) {
 		return parseWave(args)
 	case "lfo":
 		return parseLFO(args)
+	case "tone":
+		return parsePatchTone(args)
 	}
 	return nil, fmt.Errorf("unknown patch category %q", cat)
 }
@@ -283,7 +285,7 @@ func parseToneCategory(cat string, args []string) ([]patchCommand, error) {
 		env = true
 		rest = rest[1:]
 	}
-	if len(rest) < 2 {
+	if len(rest) < 1 {
 		return nil, fmt.Errorf("%s", usage)
 	}
 	name := rest[0]
@@ -371,8 +373,8 @@ func parseCtrl(args []string) ([]patchCommand, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("usage: set/get patch ctrl [<1-3>] [tone <1-4>] <param> <val>")
 	}
-	// Control 1-3 per-Tone form: <1-3> tone <1-4> <dst|dep><1-4> <val>.
-	if len(args) >= 5 && args[1] == "tone" {
+	// Control 1-3 per-Tone form: <1-3> tone <1-4> <dst|dep><1-4> [<val>].
+	if len(args) >= 4 && args[1] == "tone" {
 		i, err := strconv.Atoi(args[0])
 		if err != nil || i < 1 || i > 3 {
 			return nil, fmt.Errorf("invalid control index %q (want 1-3)", args[0])
@@ -389,11 +391,11 @@ func parseCtrl(args []string) ([]patchCommand, error) {
 		if err != nil {
 			return nil, fmt.Errorf("unknown ctrl parameter %q", name)
 		}
-		return checkValues(patchParam{block: "tone", tone: tone, offset: ctrlToneOffset(normalize(name), i, k), size: 1, name: normalize(name)}, args[4:]), nil
+		return checkValues(patchParam{block: "tone", tone: tone, offset: ctrlToneOffset(normalize(name), i, k), size: 1, name: normalize(name)}, args[min(5, len(args)):]), nil
 	}
 	// Common forms first: plain name or <index> hold|src.
 	if args[0] != "tone" {
-		if len(args) >= 3 && (args[1] == "hold" || args[1] == "src") {
+		if len(args) >= 2 && (args[1] == "hold" || args[1] == "src") {
 			n, err := strconv.Atoi(args[0])
 			if err != nil {
 				return nil, fmt.Errorf("invalid control index %q", args[0])
@@ -402,7 +404,7 @@ func parseCtrl(args []string) ([]patchCommand, error) {
 			if err != nil {
 				return nil, err
 			}
-			return checkValues(p, args[2:]), nil
+			return checkValues(p, args[min(3, len(args)):]), nil
 		}
 		if ctrlToneNames[normalize(args[0])] || ctrlToneIndexedNames[normalize(args[0])] {
 			return nil, fmt.Errorf("parameter %q needs a tone selector: set patch ctrl [ctrl <1-3>] tone <1-4> %s <val>", args[0], args[0])
@@ -414,8 +416,8 @@ func parseCtrl(args []string) ([]patchCommand, error) {
 		return checkValues(p, args[1:]), nil
 	}
 	// Per-Tone forms.
-	if len(args) < 4 {
-		return nil, fmt.Errorf("usage: set/get patch ctrl tone <1-4> <param> <val> or set patch ctrl <1-3> tone <1-4> <dst|dep><1-4> <val>")
+	if len(args) < 3 {
+		return nil, fmt.Errorf("usage: set/get patch ctrl tone <1-4> <param> [<val>]")
 	}
 	tone, err := strconv.Atoi(args[1])
 	if err != nil || tone < 1 || tone > 4 {
@@ -432,13 +434,13 @@ func parseCtrl(args []string) ([]patchCommand, error) {
 	if err != nil {
 		return nil, err
 	}
-	return checkValues(patchParam{block: "tone", tone: tone, offset: p.offset, size: 1, name: normalize(name)}, args[3:]), nil
+	return checkValues(patchParam{block: "tone", tone: tone, offset: p.offset, size: 1, name: normalize(name)}, args[min(4, len(args)):]), nil
 }
 
 // parseWave parses the WAVE category form:
 // set/get patch wave [tone <1-4>] <param> <val>.
 func parseWave(args []string) ([]patchCommand, error) {
-	if len(args) < 2 {
+	if len(args) < 1 {
 		return nil, fmt.Errorf("usage: set/get patch wave [tone <1-4>] <param> <val>")
 	}
 	tone := 1
@@ -451,7 +453,7 @@ func parseWave(args []string) ([]patchCommand, error) {
 		tone = n
 		rest = rest[2:]
 	}
-	if len(rest) < 2 {
+	if len(rest) < 1 {
 		return nil, fmt.Errorf("usage: set/get patch wave [tone <1-4>] <param> <val>")
 	}
 	name := rest[0]
@@ -465,12 +467,41 @@ func parseWave(args []string) ([]patchCommand, error) {
 	return checkValues(p, rest[1:]), nil
 }
 
+// parsePatchTone parses the generic per-Tone category form
+// set/get patch tone <1-4> <param> <val> for the Velocity range and Key
+// range parameters (vellower, velupper, velfade, keylower, keyupper).
+func parsePatchTone(args []string) ([]patchCommand, error) {
+	if len(args) < 3 || args[0] != "tone" {
+		return nil, fmt.Errorf("usage: set/get patch tone <1-4> <param> <val>")
+	}
+	tone, err := strconv.Atoi(args[1])
+	if err != nil || tone < 1 || tone > 4 {
+		return nil, fmt.Errorf("invalid tone %q (want 1-4)", args[1])
+	}
+	name := args[2]
+	if !toneRangeNames[normalize(name)] {
+		return nil, fmt.Errorf("unknown tone parameter %q (want vellower, velupper, velfade, keylower, keyupper)", name)
+	}
+	p, err := lookupTone(name, tone)
+	if err != nil {
+		return nil, err
+	}
+	return checkValues(p, args[3:]), nil
+}
+
+// toneRangeNames are the per-Tone Velocity range and Key range parameter
+// names (doc/patch-edit-mode-structure.md).
+var toneRangeNames = map[string]bool{
+	"vellower": true, "velupper": true, "velfade": true,
+	"keylower": true, "keyupper": true,
+}
+
 // parseLFO parses the LFO category forms:
 //
 //	set/get patch lfo <1-2> tone <1-4> <param> <val>   (LFO1/LFO2)
 //	set/get patch lfo <1-2> <param> <val>              (LFO depth 1:2)
 func parseLFO(args []string) ([]patchCommand, error) {
-	if len(args) < 2 {
+	if len(args) < 1 {
 		return nil, fmt.Errorf("usage: set/get patch lfo <1-2> [tone <1-4>] <param> <val>")
 	}
 	n, err := strconv.Atoi(args[0])
@@ -483,7 +514,7 @@ func parseLFO(args []string) ([]patchCommand, error) {
 		if err != nil || t < 1 || t > 4 {
 			return nil, fmt.Errorf("invalid tone %q (want 1-4)", rest[1])
 		}
-		if len(rest) < 4 {
+		if len(rest) < 3 {
 			return nil, fmt.Errorf("usage: set/get patch lfo <1-2> tone <1-4> <param> <val>")
 		}
 		name := rest[2]
@@ -491,9 +522,9 @@ func parseLFO(args []string) ([]patchCommand, error) {
 		if !ok {
 			return nil, fmt.Errorf("unknown lfo parameter %q (want wave, keytrig, rate, offset, delay, fade, fadetime, sync)", name)
 		}
-		return checkValues(patchParam{block: "tone", tone: t, offset: p.offset, size: p.size, name: normalize(name)}, rest[3:]), nil
+		return checkValues(patchParam{block: "tone", tone: t, offset: p.offset, size: p.size, name: normalize(name)}, rest[min(4, len(rest)):]), nil
 	}
-	if len(rest) < 2 {
+	if len(rest) < 1 {
 		return nil, fmt.Errorf("usage: set/get patch lfo <1-2> <param> <val>")
 	}
 	name := rest[0]
@@ -614,6 +645,9 @@ Commands:
         TVA: level, pan, envvel, envcurve, bias, biaspoint, biasdir,
         pankeyfollow, randompan, altpan; with env: vt1, vt4, keyfollow,
         t1-t4, l1-l3
+  set/get patch tone <1-4> <param> <val>
+        per-Tone Velocity and Key range: vellower, velupper, velfade,
+        keylower, keyupper
   set address <hi> <lo> <value...>
         write raw bytes to the address given as two 16-bit hex numbers
         (e.g. 0x0000 0x0006 = master tune)
@@ -753,6 +787,9 @@ func formatValue(name string, data []byte) string {
 	}
 	if len(data) == 2 {
 		return strconv.Itoa(rawValue(data))
+	}
+	if len(data) > 2 {
+		return message.Hex(data)
 	}
 	switch normalize(name) {
 	case "pan":

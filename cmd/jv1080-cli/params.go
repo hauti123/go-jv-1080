@@ -394,3 +394,11 @@ func panValue(s string) (int, bool) {
 	}
 	return 0, false
 }
+
+// min returns the smaller of two ints.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
