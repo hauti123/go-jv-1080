@@ -12,16 +12,16 @@
     and restore its original content afterwards.
 
 .PARAMETER Out
-    Name of the MIDI output port to send to.
+    Name of the MIDI output port to send to (default "SERIES 208i MIDI").
 
 .PARAMETER In
-    Name of the MIDI input port to listen on.
+    Name of the MIDI input port to listen on (default "SERIES 208i MIDI").
 
 .PARAMETER OutNum
-    Number of the MIDI output port (used when -Out is not given). Default 0.
+    Number of the MIDI output port (only used when -Out is empty).
 
 .PARAMETER InNum
-    Number of the MIDI input port (used when -In is not given). Default 0.
+    Number of the MIDI input port (only used when -In is empty).
 
 .PARAMETER DeviceId
     Device ID of the JV-1080 in hex (default "10" = unit 17).
@@ -41,8 +41,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Out = "",
-    [string]$In = "",
+    [string]$Out = "SERIES 208i MIDI",
+    [string]$In = "SERIES 208i MIDI",
     [int]$OutNum = 0,
     [int]$InNum = 0,
     [string]$DeviceId = "10",
