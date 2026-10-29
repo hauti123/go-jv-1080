@@ -8,7 +8,7 @@
     JV1080_DEVICE_ID, JV1080_TEST_PATCH) and runs
     `go test -run Integration ./...`.
 
-    The integration tests write to user patch JV1080_TEST_PATCH (default 128)
+    The integration tests write to user patch JV1080_TEST_PATCH (default 113)
     and restore its original content afterwards.
 
 .PARAMETER Out
@@ -27,7 +27,7 @@
     Device ID of the JV-1080 in hex (default "10" = unit 17).
 
 .PARAMETER TestPatch
-    User patch slot the store tests write to (default 128). The original
+    User patch slot the store tests write to (default 113). The original
     content is restored after the test.
 
 .PARAMETER Verbose
@@ -46,7 +46,7 @@ param(
     [int]$OutNum = 0,
     [int]$InNum = 0,
     [string]$DeviceId = "10",
-    [int]$TestPatch = 128
+    [int]$TestPatch = 113
 )
 
 $ErrorActionPreference = "Stop"

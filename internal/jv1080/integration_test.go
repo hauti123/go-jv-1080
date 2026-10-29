@@ -19,7 +19,7 @@ import (
 //	JV1080_OUT_NUM / JV1080_IN_NUM port numbers (default 0)
 //	JV1080_DEVICE_ID               device ID in hex (default 10 = unit 17)
 //	JV1080_TEST_PATCH              user patch slot used by the store test
-//	                                   (default 128, restored afterwards)
+//	                                   (default 113, restored afterwards)
 func skipUnlessIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getenv("JV1080_INTEGRATION") != "1" {
@@ -136,7 +136,7 @@ func TestIntegrationReadUserBank(t *testing.T) {
 func TestIntegrationPatchParameterRoundTrip(t *testing.T) {
 	skipUnlessIntegration(t)
 	c := newIntegrationClient(t)
-	slot := envInt("JV1080_TEST_PATCH", 128)
+	slot := envInt("JV1080_TEST_PATCH", 113)
 
 	p, err := c.ReadUserPatch(slot)
 	if err != nil {
@@ -364,7 +364,7 @@ func clonePatch(p *Patch) *Patch {
 func TestIntegrationStorePatch(t *testing.T) {
 	skipUnlessIntegration(t)
 	c := newIntegrationClient(t)
-	slot := envInt("JV1080_TEST_PATCH", 128)
+	slot := envInt("JV1080_TEST_PATCH", 113)
 
 	orig, err := c.ReadUserPatch(slot)
 	if err != nil {
