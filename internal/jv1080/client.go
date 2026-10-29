@@ -286,14 +286,20 @@ func (c *Client) StorePerformance(number int, p *Performance) error {
 	return nil
 }
 
-// SetPatchParameter updates a single parameter of a user patch on the
-// device. The parameter is identified by its block ("common" or "tone"),
-// the tone number (1-4, 0 for common) and the byte offset within the
-// block. value holds the raw parameter bytes (one byte, or two nibbles for
-// nibblized parameters such as the wave number).
+// SetPatchParameter updates a single parameter of a patch on the device.
+// For BankUser the parameter is written to the user patch number (1-128);
+// for all other banks it is written to the patch-mode temporary patch
+// (preset, GM and expansion banks are read-only). The parameter is
+// identified by its block ("common" or "tone"), the tone number (1-4, 0
+// for common) and the byte offset within the block. value holds the raw
+// parameter bytes (one byte, or two nibbles for nibblized parameters such
+// as the wave number).
 func (c *Client) SetPatchParameter(bank Bank, number int, block string, tone int, offset int, value []byte) error {
 	var area message.Address
 	if bank == BankUser {
+		if number < 1 || number > 128 {
+			return fmt.Errorf("jv1080: user patch number %d out of range 1-128", number)
+		}
 		area = userPatchArea(number)
 	} else {
 		area = TemporaryPatchArea()

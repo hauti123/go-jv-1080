@@ -135,9 +135,23 @@ func (d *Device) Send(msg []byte) error {
 	return d.out.Send(msg)
 }
 
-// SendMessage serializes msg and sends it to the device.
+// SendMessage serializes msg and sends it to the device. The byte stream
+// is split into the individual MIDI messages first: some drivers (e.g.
+// the Windows multimedia backend) reject multi-message streams that are
+// not SysEx.
 func (d *Device) SendMessage(msg message.Message) error {
-	return d.Send(msg.Bytes())
+	return d.SendMessages(msg.Bytes())
+}
+
+// SendMessages splits a byte stream of concatenated MIDI messages and
+// sends each message individually.
+func (d *Device) SendMessages(b []byte) error {
+	for _, m := range message.SplitMessages(b) {
+		if err := d.Send(m); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Request sends a data request (RQ1) and waits for the device to answer

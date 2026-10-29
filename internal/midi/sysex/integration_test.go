@@ -70,14 +70,21 @@ func newIntegrationClient(t *testing.T) *Client {
 }
 
 // TestIntegrationIdentity sends an identity request and checks that a
-// Roland JV answers.
+// Roland JV answers. Some JV-1080 units do not implement the identity
+// reply; in that case the test falls back to a data request as a liveness
+// check.
 func TestIntegrationIdentity(t *testing.T) {
 	skipUnlessIntegration(t)
 	dev := openIntegrationDevice(t)
 	deviceID := envHex("JV1080_DEVICE_ID", message.DefaultDeviceID)
 	reply, err := dev.RequestIdentity(deviceID, 5*time.Second)
 	if err != nil {
-		t.Fatalf("no identity reply: %v", err)
+		t.Logf("no identity reply (%v); checking device liveness with a data request instead", err)
+		c := NewClient(dev, deviceID)
+		if _, err := c.DownloadTemporaryPatch(); err != nil {
+			t.Fatalf("device does not answer data requests either: %v", err)
+		}
+		return
 	}
 	if reply.Manufacturer != message.RolandManufacturerID {
 		t.Errorf("manufacturer = %02X, want Roland %02X", reply.Manufacturer, message.RolandManufacturerID)

@@ -60,13 +60,19 @@ func newIntegrationClient(t *testing.T) *Client {
 }
 
 // TestIntegrationIdentity checks that the connected device answers an
-// identity request.
+// identity request. Some JV-1080 units do not implement the identity
+// reply; in that case the test falls back to a data request as a liveness
+// check.
 func TestIntegrationIdentity(t *testing.T) {
 	skipUnlessIntegration(t)
 	c := newIntegrationClient(t)
 	reply, err := c.Identity()
 	if err != nil {
-		t.Fatalf("no identity reply: %v", err)
+		t.Logf("no identity reply (%v); checking device liveness with a data request instead", err)
+		if _, err := c.ReadUserPatch(1); err != nil {
+			t.Fatalf("device does not answer data requests either: %v", err)
+		}
+		return
 	}
 	if reply.Manufacturer != message.RolandManufacturerID {
 		t.Errorf("manufacturer = %02X, want Roland %02X", reply.Manufacturer, message.RolandManufacturerID)
@@ -232,8 +238,16 @@ func patchParameterTests() []patchParameterTest {
 
 // newParameterValue derives a new raw value for a parameter from its
 // current raw value, so the test never writes the value that is already
-// there. For nibblized (2-byte) parameters it shifts both nibbles.
+// there. For nibblized (2-byte) parameters the raw value is a 0-254 number
+// split into a high nibble byte and a low nibble byte (high nibble first);
+// the shift is applied to that number and re-nibblized, so both bytes
+// stay valid nibbles.
 func newParameterValue(current []byte, size int) []byte {
+	if size == 2 {
+		raw := int(current[0])<<4 | int(current[1])
+		raw = (raw + 37) % 255
+		return []byte{byte(raw >> 4), byte(raw & 0x0F)}
+	}
 	out := make([]byte, size)
 	for i := range out {
 		out[i] = (current[i] + 37) % 128
@@ -295,7 +309,8 @@ func TestIntegrationPatchParameters(t *testing.T) {
 			current := append([]byte{}, block[pt.offset:pt.offset+pt.size]...)
 			value := newParameterValue(current, pt.size)
 
-			if err := c.SetPatchParameter(BankUser, 0, pt.block, pt.tone, pt.offset, value); err != nil {
+			// Non-user banks are written to the temporary patch.
+			if err := c.SetPatchParameter(BankPresetA, 0, pt.block, pt.tone, pt.offset, value); err != nil {
 				t.Fatalf("SetPatchParameter: %v", err)
 			}
 
@@ -329,7 +344,7 @@ func TestIntegrationPatchParameters(t *testing.T) {
 			}
 
 			// Restore the original value.
-			if err := c.SetPatchParameter(BankUser, 0, pt.block, pt.tone, pt.offset, current); err != nil {
+			if err := c.SetPatchParameter(BankPresetA, 0, pt.block, pt.tone, pt.offset, current); err != nil {
 				t.Fatalf("restore parameter: %v", err)
 			}
 		})
