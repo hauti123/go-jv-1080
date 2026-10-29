@@ -10,6 +10,13 @@ import (
 // patchParameterTest describes one patch parameter: where it lives
 // (block, tone, offset), how many raw bytes it occupies, the valid raw
 // value range and how to read its value back from a patch.
+//
+// resets is the optional [from, to) block range that the device
+// legitimately rewrites when the parameter is written: changing the EFX
+// type (offset 0x0C) makes the JV-1080 load the selected effect's
+// default parameters into the EFX parameter bytes 0x0D-0x17. Those bytes
+// are exempt from the "no other byte changed" check and are restored
+// after the subtest.
 type patchParameterTest struct {
 	name   string
 	block  string // "common" or "tone"
@@ -18,22 +25,27 @@ type patchParameterTest struct {
 	size   int // raw bytes: 1, or 2 for nibblized values
 	min    int // smallest valid raw value
 	max    int // largest valid raw value (for nibblized parameters: the raw 0-254 range)
+	resets *[2]int
 	read   func(*Patch) int
 }
+
+// efxParamsRange is the EFX parameter block of the patch common block,
+// reset by the device when the EFX type changes.
+var efxParamsRange = &[2]int{0x0D, 0x18}
 
 // patchParameterTests lists every patch parameter the Patch model exposes.
 func patchParameterTests() []patchParameterTest {
 	common := []patchParameterTest{
-		{"name[0]", "common", 0, 0x00, 1, 32, 127, func(p *Patch) int { return int(p.Common[0x00]) }},
-		{"name[11]", "common", 0, 0x0B, 1, 32, 127, func(p *Patch) int { return int(p.Common[0x0B]) }},
-		{"EFX type", "common", 0, 0x0C, 1, 0, 39, func(p *Patch) int { return p.EFXType() }},
-		{"patch level", "common", 0, 0x2E, 1, 0, 127, func(p *Patch) int { return p.PatchLevel() }},
-		{"patch pan", "common", 0, 0x2F, 1, 0, 127, func(p *Patch) int { return p.PatchPan() }},
+		{"name[0]", "common", 0, 0x00, 1, 32, 127, nil, func(p *Patch) int { return int(p.Common[0x00]) }},
+		{"name[11]", "common", 0, 0x0B, 1, 32, 127, nil, func(p *Patch) int { return int(p.Common[0x0B]) }},
+		{"EFX type", "common", 0, 0x0C, 1, 0, 39, efxParamsRange, func(p *Patch) int { return p.EFXType() }},
+		{"patch level", "common", 0, 0x2E, 1, 0, 127, nil, func(p *Patch) int { return p.PatchLevel() }},
+		{"patch pan", "common", 0, 0x2F, 1, 0, 127, nil, func(p *Patch) int { return p.PatchPan() }},
 	}
 	var tones []patchParameterTest
 	for t := 1; t <= 4; t++ {
 		tones = append(tones,
-			patchParameterTest{fmt.Sprintf("tone %d switch", t), "tone", t, 0x00, 1, 0, 1,
+			patchParameterTest{fmt.Sprintf("tone %d switch", t), "tone", t, 0x00, 1, 0, 1, nil,
 				func(p *Patch) int {
 					b := 0
 					if p.ToneSwitch(t) {
@@ -41,27 +53,27 @@ func patchParameterTests() []patchParameterTest {
 					}
 					return b
 				}},
-			patchParameterTest{fmt.Sprintf("tone %d wave group type", t), "tone", t, 0x01, 1, 0, 2,
+			patchParameterTest{fmt.Sprintf("tone %d wave group type", t), "tone", t, 0x01, 1, 0, 2, nil,
 				func(p *Patch) int { return p.WaveGroupType(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d wave group ID", t), "tone", t, 0x02, 1, 0, 127,
+			patchParameterTest{fmt.Sprintf("tone %d wave group ID", t), "tone", t, 0x02, 1, 0, 127, nil,
 				func(p *Patch) int { return p.WaveGroupID(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d wave number", t), "tone", t, 0x03, 2, 0, 254,
+			patchParameterTest{fmt.Sprintf("tone %d wave number", t), "tone", t, 0x03, 2, 0, 254, nil,
 				func(p *Patch) int { return p.WaveNumber(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d coarse tune", t), "tone", t, 0x3D, 1, 0, 96,
+			patchParameterTest{fmt.Sprintf("tone %d coarse tune", t), "tone", t, 0x3D, 1, 0, 96, nil,
 				func(p *Patch) int { return p.CoarseTune(t) + 48 }},
-			patchParameterTest{fmt.Sprintf("tone %d fine tune", t), "tone", t, 0x3E, 1, 0, 100,
+			patchParameterTest{fmt.Sprintf("tone %d fine tune", t), "tone", t, 0x3E, 1, 0, 100, nil,
 				func(p *Patch) int { return p.FineTune(t) + 50 }},
-			patchParameterTest{fmt.Sprintf("tone %d cutoff", t), "tone", t, 0x51, 1, 0, 127,
+			patchParameterTest{fmt.Sprintf("tone %d cutoff", t), "tone", t, 0x51, 1, 0, 127, nil,
 				func(p *Patch) int { return p.Cutoff(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d resonance", t), "tone", t, 0x53, 1, 0, 127,
+			patchParameterTest{fmt.Sprintf("tone %d resonance", t), "tone", t, 0x53, 1, 0, 127, nil,
 				func(p *Patch) int { return p.Resonance(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d level", t), "tone", t, 0x65, 1, 0, 127,
+			patchParameterTest{fmt.Sprintf("tone %d level", t), "tone", t, 0x65, 1, 0, 127, nil,
 				func(p *Patch) int { return p.ToneLevel(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d pan", t), "tone", t, 0x77, 1, 0, 127,
+			patchParameterTest{fmt.Sprintf("tone %d pan", t), "tone", t, 0x77, 1, 0, 127, nil,
 				func(p *Patch) int { return p.TonePan(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d chorus send", t), "tone", t, 0x7F, 1, 0, 127,
+			patchParameterTest{fmt.Sprintf("tone %d chorus send", t), "tone", t, 0x7F, 1, 0, 127, nil,
 				func(p *Patch) int { return p.ChorusSend(t) }},
-			patchParameterTest{fmt.Sprintf("tone %d reverb send", t), "tone", t, 0x80, 1, 0, 127,
+			patchParameterTest{fmt.Sprintf("tone %d reverb send", t), "tone", t, 0x80, 1, 0, 127, nil,
 				func(p *Patch) int { return p.ReverbSend(t) }},
 		)
 	}
@@ -218,9 +230,14 @@ func TestIntegrationPatchParameters(t *testing.T) {
 			if got := after[pt.offset : pt.offset+pt.size]; !bytes.Equal(got, value) {
 				t.Errorf("parameter = % X, want % X", got, value)
 			}
-			// No other byte of the block may have changed.
+			// No other byte of the block may have changed, except the
+			// range the device legitimately resets for this parameter
+			// (the EFX parameter block when the EFX type changes).
 			for i := range after {
 				if i >= pt.offset && i < pt.offset+pt.size {
+					continue
+				}
+				if pt.resets != nil && i >= pt.resets[0] && i < pt.resets[1] {
 					continue
 				}
 				if after[i] != block[i] {
@@ -228,9 +245,16 @@ func TestIntegrationPatchParameters(t *testing.T) {
 				}
 			}
 
-			// Restore the original value.
+			// Restore the original parameter value and, when the device
+			// reset a range for it, the original range content.
 			if err := c.SetPatchParameter(BankPresetA, 0, pt.block, pt.tone, pt.offset, current); err != nil {
 				t.Fatalf("restore parameter: %v", err)
+			}
+			if pt.resets != nil {
+				r := *pt.resets
+				if err := c.SetPatchParameter(BankPresetA, 0, pt.block, pt.tone, r[0], block[r[0]:r[1]]); err != nil {
+					t.Fatalf("restore reset range: %v", err)
+				}
 			}
 			time.Sleep(50 * time.Millisecond)
 		})
