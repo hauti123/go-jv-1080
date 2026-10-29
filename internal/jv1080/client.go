@@ -79,7 +79,9 @@ func (c *Client) ReadPatch(bank Bank, number int) (*Patch, error) {
 	if err := c.SelectPatch(0, bank, number); err != nil {
 		return nil, err
 	}
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the device to load the patch into the temporary patch
+	// before reading it back.
+	time.Sleep(200 * time.Millisecond)
 	return c.ReadTemporaryPatch()
 }
 

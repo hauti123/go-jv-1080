@@ -172,7 +172,24 @@ func TestIntegrationPatchParameters(t *testing.T) {
 				return append([]byte{}, pt.blockOf(p)...)
 			}
 
-			block := readBlock()
+			// Read the block twice; the two reads must be identical,
+			// otherwise the device is still settling (e.g. still
+			// loading the patch selected above) and the comparison
+			// below would be meaningless.
+			var block []byte
+			for attempt := 0; attempt < 10; attempt++ {
+				first := readBlock()
+				second := readBlock()
+				if bytes.Equal(first, second) {
+					block = first
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+				if attempt == 9 {
+					t.Fatal("temporary patch did not settle")
+				}
+			}
+
 			current := append([]byte{}, block[pt.offset:pt.offset+pt.size]...)
 			value := newParameterValue(current, pt.size, pt.min, pt.max)
 
