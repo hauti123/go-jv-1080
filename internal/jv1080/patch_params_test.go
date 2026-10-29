@@ -162,6 +162,33 @@ func TestIntegrationPatchParameters(t *testing.T) {
 		t.Fatalf("load PRESET A patch 1 into temporary patch: %v", err)
 	}
 
+	// Wait until the temporary patch really holds the selected patch:
+	// the program change loads it asynchronously on the device, and
+	// until the load completed the temporary patch still holds the
+	// previously selected patch. Read the common block until two reads
+	// agree; the result is stable, so it must be the loaded patch.
+	readCommon := func() []byte {
+		p, err := c.ReadTemporaryPatch()
+		if err != nil {
+			t.Fatalf("read temporary patch: %v", err)
+		}
+		return p.Common
+	}
+	var loaded []byte
+	for attempt := 0; attempt < 20; attempt++ {
+		first := readCommon()
+		time.Sleep(50 * time.Millisecond)
+		second := readCommon()
+		if bytes.Equal(first, second) {
+			loaded = first
+			break
+		}
+		if attempt == 19 {
+			t.Fatal("temporary patch did not settle on the selected patch")
+		}
+	}
+	t.Logf("temporary patch loaded: %q", string(bytes.TrimRight(loaded[0:12], " ")))
+
 	for _, pt := range patchParameterTests() {
 		t.Run(pt.name, func(t *testing.T) {
 			readBlock := func() []byte {
@@ -172,24 +199,7 @@ func TestIntegrationPatchParameters(t *testing.T) {
 				return append([]byte{}, pt.blockOf(p)...)
 			}
 
-			// Read the block twice; the two reads must be identical,
-			// otherwise the device is still settling (e.g. still
-			// loading the patch selected above) and the comparison
-			// below would be meaningless.
-			var block []byte
-			for attempt := 0; attempt < 10; attempt++ {
-				first := readBlock()
-				second := readBlock()
-				if bytes.Equal(first, second) {
-					block = first
-					break
-				}
-				time.Sleep(50 * time.Millisecond)
-				if attempt == 9 {
-					t.Fatal("temporary patch did not settle")
-				}
-			}
-
+			block := readBlock()
 			current := append([]byte{}, block[pt.offset:pt.offset+pt.size]...)
 			value := newParameterValue(current, pt.size, pt.min, pt.max)
 
