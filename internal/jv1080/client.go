@@ -397,5 +397,5 @@ func (c *Client) SetTVFEnvelope(bank Bank, number, tone int, values []byte) erro
 	} else {
 		area = TemporaryPatchArea()
 	}
-	return c.sendDataSet(patchToneArea(area, tone).Add(0x55), values)
+	return c.sendDataSet(patchToneArea(area, tone).Add(0x5B), values)
 }
