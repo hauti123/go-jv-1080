@@ -150,23 +150,21 @@ func TestPatchParameterTable(t *testing.T) {
 // The temporary patch is loaded from PRESET A patch 1 first: selecting a
 // factory patch copies it into the temporary patch (volatile RAM, never
 // written back to ROM), so the tests can modify all parameters freely
-// without touching any user patch. Each subtest reads the affected block
-// fresh before and after the write and leaves a settle delay for the
-// device to apply the write.
+// without touching any user patch. The load is verified against the
+// factory name of the source patch before the sweep starts, so a stale
+// temporary patch can never be used as a baseline. Each subtest reads the
+// affected block fresh before and after the write and leaves a settle
+// delay for the device to apply the write.
 func TestIntegrationPatchParameters(t *testing.T) {
 	skipUnlessIntegration(t)
 	c := newIntegrationClient(t)
 
-	// Load PRESET A patch 1 into the temporary patch (read-only source).
-	if _, err := c.ReadPatch(BankPresetA, 1); err != nil {
-		t.Fatalf("load PRESET A patch 1 into temporary patch: %v", err)
+	// Select PRESET A patch 1 and wait for it to load into the
+	// temporary patch.
+	if err := c.SelectPatch(0, BankPresetA, 1); err != nil {
+		t.Fatalf("select PRESET A patch 1: %v", err)
 	}
 
-	// Wait until the temporary patch really holds the selected patch:
-	// the program change loads it asynchronously on the device, and
-	// until the load completed the temporary patch still holds the
-	// previously selected patch. Read the common block until two reads
-	// agree; the result is stable, so it must be the loaded patch.
 	readCommon := func() []byte {
 		p, err := c.ReadTemporaryPatch()
 		if err != nil {
@@ -174,20 +172,28 @@ func TestIntegrationPatchParameters(t *testing.T) {
 		}
 		return p.Common
 	}
-	var loaded []byte
-	for attempt := 0; attempt < 20; attempt++ {
+	// The program change loads the patch asynchronously on the device;
+	// until the load completed the temporary patch still holds the
+	// previously selected patch. Read the common block until two reads
+	// agree and the name matches the selected patch.
+	wantName, ok := PresetPatchName(BankPresetA, 1)
+	if !ok {
+		t.Fatalf("no factory name for PRESET A patch 1")
+	}
+	for attempt := 0; attempt < 40; attempt++ {
 		first := readCommon()
 		time.Sleep(50 * time.Millisecond)
 		second := readCommon()
-		if bytes.Equal(first, second) {
-			loaded = first
+		if bytes.Equal(first, second) &&
+			string(bytes.TrimRight(first[0:12], " ")) == wantName {
 			break
 		}
-		if attempt == 19 {
-			t.Fatal("temporary patch did not settle on the selected patch")
+		if attempt == 39 {
+			t.Fatalf("temporary patch did not settle on %q (name %q)",
+				wantName, string(bytes.TrimRight(second[0:12], " ")))
 		}
 	}
-	t.Logf("temporary patch loaded: %q", string(bytes.TrimRight(loaded[0:12], " ")))
+	t.Logf("temporary patch loaded: %q", wantName)
 
 	for _, pt := range patchParameterTests() {
 		t.Run(pt.name, func(t *testing.T) {
