@@ -469,6 +469,9 @@ func parseNote(s string) (uint8, error) {
 }
 
 // parseAddress parses two 16-bit hex numbers into a 4-byte address.
+// hi holds the first two address bytes, lo the last two, e.g.
+// 0x0300 0x002E is the address 03 00 00 2E. Address bytes are 7-bit;
+// the high bit of each input byte is dropped.
 func parseAddress(hi, lo string) (message.Address, error) {
 	h, err := parseNumber(hi)
 	if err != nil || h > 0xFFFF {
@@ -478,7 +481,7 @@ func parseAddress(hi, lo string) (message.Address, error) {
 	if err != nil || l > 0xFFFF {
 		return message.Address{}, fmt.Errorf("invalid address lo %q", lo)
 	}
-	return message.Address{byte(h >> 7 & 0x7F), byte(h & 0x7F), byte(l >> 7 & 0x7F), byte(l & 0x7F)}, nil
+	return message.Address{byte(h>>8) & 0x7F, byte(h) & 0x7F, byte(l>>8) & 0x7F, byte(l) & 0x7F}, nil
 }
 
 // parseValues parses decimal or hex values into raw bytes. For size-2

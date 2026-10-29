@@ -34,10 +34,21 @@ func TestParseAddress(t *testing.T) {
 	if err != nil || addr != (message.Address{0x00, 0x00, 0x00, 0x06}) {
 		t.Errorf("parseAddress(0x0000, 0x0006) = %s, %v", addr, err)
 	}
-	// 0x1000 0x0006: hi = 0x1000 -> 0x20 0x00, lo = 0x0006 -> 0x00 0x06.
+	// 0x1000 0x0006: hi holds the first two address bytes (0x10 0x00),
+	// lo the last two (0x00 0x06).
 	addr, err = parseAddress("0x1000", "0x0006")
-	if err != nil || addr != (message.Address{0x20, 0x00, 0x00, 0x06}) {
+	if err != nil || addr != (message.Address{0x10, 0x00, 0x00, 0x06}) {
 		t.Errorf("parseAddress(0x1000, 0x0006) = %s, %v", addr, err)
+	}
+	// 0x0300 0x002E -> 03 00 00 2E (temporary patch, patch level).
+	addr, err = parseAddress("0x0300", "0x002E")
+	if err != nil || addr != (message.Address{0x03, 0x00, 0x00, 0x2E}) {
+		t.Errorf("parseAddress(0x0300, 0x002E) = %s, %v", addr, err)
+	}
+	// 0x1106 0x0000 -> 11 06 00 00 (user patch 7).
+	addr, err = parseAddress("0x1106", "0x0000")
+	if err != nil || addr != (message.Address{0x11, 0x06, 0x00, 0x00}) {
+		t.Errorf("parseAddress(0x1106, 0x0000) = %s, %v", addr, err)
 	}
 	if _, err := parseAddress("0xzzzz", "0x0006"); err == nil {
 		t.Error("parseAddress with invalid hi should fail")
