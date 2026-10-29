@@ -351,3 +351,51 @@ func (c *Client) NoteOn(channel uint8, note, velocity uint8) error {
 func (c *Client) NoteOff(channel uint8, note uint8) error {
 	return c.dev.SendMessage(message.NoteOn{Channel: channel, Note: note, Velocity: 0})
 }
+
+// Panel mode constants of the JV-1080.
+const (
+	PanelModePatch       = 1
+	PanelModePerformance = 2
+	PanelModeGM          = 3
+)
+
+// SetPanelMode switches the panel mode of the device: PanelModePatch (1),
+// PanelModePerformance (2) or PanelModeGM (3).
+func (c *Client) SetPanelMode(mode uint8) error {
+	return c.dev.SendMessage(controlchange.NewControlChange(0, controlchange.Controller(120), mode))
+}
+
+// ReadRaw reads size bytes starting at addr and returns the raw data.
+func (c *Client) ReadRaw(addr message.Address, size int) ([]byte, error) {
+	ds, err := c.request(addr, size)
+	if err != nil {
+		return nil, err
+	}
+	return ds.Data, nil
+}
+
+// WriteRaw writes raw bytes at addr.
+func (c *Client) WriteRaw(addr message.Address, data []byte) error {
+	return c.sendDataSet(addr, data)
+}
+
+// SetTVFEnvelope writes the TVF envelope of tone t (1-4) of the temporary
+// patch: times t1-t4 followed by levels l1-l4 (8 raw bytes).
+func (c *Client) SetTVFEnvelope(bank Bank, number, tone int, values []byte) error {
+	if len(values) != 8 {
+		return fmt.Errorf("jv1080: TVF envelope needs 8 values (t1-t4 l1-l4), got %d", len(values))
+	}
+	if tone < 1 || tone > 4 {
+		return fmt.Errorf("jv1080: tone %d out of range 1-4", tone)
+	}
+	var area message.Address
+	if bank == BankUser {
+		if number < 1 || number > 128 {
+			return fmt.Errorf("jv1080: user patch number %d out of range 1-128", number)
+		}
+		area = userPatchArea(number)
+	} else {
+		area = TemporaryPatchArea()
+	}
+	return c.sendDataSet(patchToneArea(area, tone).Add(0x55), values)
+}

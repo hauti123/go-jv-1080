@@ -51,10 +51,19 @@ type Device struct {
 	out drivers.Out
 	in  drivers.In
 
-	mu        sync.RWMutex
-	callbacks []func(msg []byte)
-	stop      func()
-	done      chan struct{}
+	mu         sync.RWMutex
+	callbacks  []func(msg []byte)
+	sendLogger func(msg []byte)
+	stop       func()
+	done       chan struct{}
+}
+
+// SetSendLogger registers a logger that is called with every raw message
+// sent to the device (after it was split into individual messages).
+func (d *Device) SetSendLogger(logger func(msg []byte)) {
+	d.mu.Lock()
+	d.sendLogger = logger
+	d.mu.Unlock()
 }
 
 // MessageHandler is called for every incoming MIDI message. The byte slice
@@ -132,6 +141,12 @@ func (d *Device) RegisterCallback(cb MessageHandler) (unregister func()) {
 
 // Send sends a raw MIDI message to the device.
 func (d *Device) Send(msg []byte) error {
+	d.mu.RLock()
+	logger := d.sendLogger
+	d.mu.RUnlock()
+	if logger != nil {
+		logger(msg)
+	}
 	return d.out.Send(msg)
 }
 

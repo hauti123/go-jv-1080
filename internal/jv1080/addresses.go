@@ -191,9 +191,14 @@ func performancePartArea(p int) message.Address {
 	return message.Address{areaTemporaryPerformance, 0x00, byte(0x10 + (p - 1)), 0x00}
 }
 
+// PatchToneArea returns the address of tone t (1-4) within a patch area.
+func PatchToneArea(area message.Address, t int) message.Address {
+	return message.Address{area[0], area[1], byte(toneBaseOffsets[t-1]), 0x00}
+}
+
 // patchToneArea returns the address of tone t (1-4) within a patch area.
 func patchToneArea(area message.Address, t int) message.Address {
-	return message.Address{area[0], area[1], byte(toneBaseOffsets[t-1]), 0x00}
+	return PatchToneArea(area, t)
 }
 
 // patchCommonBlock returns the address and size of a patch's common block.
