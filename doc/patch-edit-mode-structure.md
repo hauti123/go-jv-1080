@@ -89,7 +89,9 @@ PATCH EDIT
 
 ## Common
 
-All offsets in the Patch common block (*1-3-1). Example:
+All offsets in the Patch common block (*1-3-1).
+
+### CLI
 `jv1080-cli set patch common <cli-name> <val>`.
 
 ### Patch name
@@ -133,6 +135,9 @@ in common (see above). Example: `jv1080-cli set patch tone <n> <cli-name> <val>`
 EFX/Chorus/Reverb/EFX-CTRL parameters are in the Patch common block (*1-3-1);
 the per-Tone output routing and send levels are in the tone blocks (*1-3-2).
 
+### CLI
+`jv1080-cli set patch efx <cli-name> <val>`.
+
 ### EFX (Patch EFX type / parameter / out / control)
 
 | Parameter | Offset | Valid values (SysEx) | CLI name |
@@ -171,6 +176,10 @@ the per-Tone output routing and send levels are in the tone blocks (*1-3-2).
 
 ### Per-Tone output (OUTPUT, per Tone)
 
+CLI
+`jv1080-cli set patch efx tone(1-4) <cli-name> <val>`.
+
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
 | Output assign `<Output Assign>` | `00 7D` | 0–3 (MIX, EFX, OUTPUT1, OUTPUT2) | `output` |
@@ -182,6 +191,11 @@ the per-Tone output routing and send levels are in the tone blocks (*1-3-2).
 
 Key mode, portamento, hold/peak and control sources are Patch common (*1-3-1);
 receive switches and the control destinations/depths are per Tone (*1-3-2).
+
+CLI
+`jv1080-cli set patch ctrl <cli-name> <val>`
+`jv1080-cli set patch ctrl tone(1-4) <cli-name> <val>`
+
 
 ### Key mode & bender (common)
 
@@ -214,19 +228,26 @@ receive switches and the control destinations/depths are per Tone (*1-3-2).
 
 ### Peak & hold (common)
 
+CLI (for paramter  `hold`)
+`jv1080-cli set patch ctrl(1-3) tone(1-4) <cli-name> <val>`
+
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
 | EFX control hold/peak `<EfxCtrl>` | `00 3C` | 0–2 (OFF, HOLD, PEAK) | `efxhold` |
-| Control 1 hold/peak `<Ctrl1>` | `00 3D` | 0–2 (OFF, HOLD, PEAK) | `ctrl1hold` |
-| Control 2 hold/peak `<Ctrl2>` | `00 3E` | 0–2 (OFF, HOLD, PEAK) | `ctrl2hold` |
-| Control 3 hold/peak `<Ctrl3>` | `00 3F` | 0–2 (OFF, HOLD, PEAK) | `ctrl3hold` |
+| Control 1 hold/peak `<Ctrl1>` | `00 3D` | 0–2 (OFF, HOLD, PEAK) | `hold` |
+| Control 2 hold/peak `<Ctrl2>` | `00 3E` | 0–2 (OFF, HOLD, PEAK) | `hold` |
+| Control 3 hold/peak `<Ctrl3>` | `00 3F` | 0–2 (OFF, HOLD, PEAK) | `hold` |
 
 ### Control source (common)
+CLI
+`jv1080-cli set patch ctrl(2-3) tone(1-4) <cli-name> <val>`
+
 
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Patch control source 2 `<Control2>` | `00 3A` | 0–15 (OFF, SYS-CTRL1, SYS-CTRL2, MODULATION, BREATH, FOOT, VOLUME, PAN, EXPRESSION, BENDER, AFTERTOUCH, LFO1, LFO2, VELOCITY, KEYFOLLOW, PLAYMATE) | `ctrl2src` |
-| Patch control source 3 `<Control3>` | `00 3B` | 0–15 (same list as source 2) | `ctrl3src` |
+| Patch control source 2 `<Control2>` | `00 3A` | 0–15 (OFF, SYS-CTRL1, SYS-CTRL2, MODULATION, BREATH, FOOT, VOLUME, PAN, EXPRESSION, BENDER, AFTERTOUCH, LFO1, LFO2, VELOCITY, KEYFOLLOW, PLAYMATE) | `src` |
+| Patch control source 3 `<Control3>` | `00 3B` | 0–15 (same list as source 2) | `src` |
 
 Control source 1 is fixed to Modulation (CC#1) and has no CLI name.
 
@@ -236,19 +257,27 @@ Destinations 1–4 and depths 1–4 for each of the three controllers. Depth ran
 0–126 (-63–+63); destination list (0–18): OFF, PCH, CUT, RES, LEV, PAN, MIX,
 CHO, REV, PL1, PL2, FL1, FL2, RL1, RL2, pL1, pL2, L1R, L2R.
 
+CLI
+`jv1080-cli set patch ctrl(1-3) tone(1-4) <cli-name> <val>`
+
+
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Controller 1 destination 1–4 | `00 15`, `00 17`, `00 19`, `00 1B` | 0–18 | `ctrl1dst1`–`ctrl1dst4` |
-| Controller 1 depth 1–4 | `00 16`, `00 18`, `00 1A`, `00 1C` | 0–126 (-63–+63) | `ctrl1dep1`–`ctrl1dep4` |
-| Controller 2 destination 1–4 | `00 1D`, `00 1F`, `00 21`, `00 23` | 0–18 | `ctrl2dst1`–`ctrl2dst4` |
-| Controller 2 depth 1–4 | `00 1E`, `00 20`, `00 22`, `00 24` | 0–126 (-63–+63) | `ctrl2dep1`–`ctrl2dep4` |
-| Controller 3 destination 1–4 | `00 25`, `00 27`, `00 29`, `00 2B` | 0–18 | `ctrl3dst1`–`ctrl3dst4` |
-| Controller 3 depth 1–4 | `00 26`, `00 28`, `00 2A`, `00 2C` | 0–126 (-63–+63) | `ctrl3dep1`–`ctrl3dep4` |
+| Controller 1 destination 1–4 | `00 15`, `00 17`, `00 19`, `00 1B` | 0–18 | `dst1`–`dst4` |
+| Controller 1 depth 1–4 | `00 16`, `00 18`, `00 1A`, `00 1C` | 0–126 (-63–+63) | `dep1`–`dep4` |
+| Controller 2 destination 1–4 | `00 1D`, `00 1F`, `00 21`, `00 23` | 0–18 | `dst1`–`dst4` |
+| Controller 2 depth 1–4 | `00 1E`, `00 20`, `00 22`, `00 24` | 0–126 (-63–+63) | `dep1`–`dep4` |
+| Controller 3 destination 1–4 | `00 25`, `00 27`, `00 29`, `00 2B` | 0–18 | `dst1`–`dst4` |
+| Controller 3 depth 1–4 | `00 26`, `00 28`, `00 2A`, `00 2C` | 0–126 (-63–+63) | `dep1`–`dep4` |
 
 ## Wave
 
 All parameters in this section are per Tone (*1-3-2). The wave-related names
 match `waveParams` in `cmd/jv1080-cli/params.go`.
+
+### CLI
+`jv1080-cli set patch wave tone(1-4) <cli-name> <val>`
 
 ### WAVE
 
@@ -282,43 +311,54 @@ suffix; LFO2 names carry the suffix `2` — except the depths, which always carr
 the LFO number (`lfo1…`, `lfo2…`) because their destination is part of the
 name.
 
+### CLI
+`jv1080-cli set patch lfo(1-2) tone(1-4) <cli-name> <val>`
+
 ### LFO1 / LFO2
 
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| LFO1 waveform `<form>` | `00 2D` | 0–7 (TRI, SIN, SAW, SQR, TRP, S&H, RND, CHS) | `lfowave` |
-| LFO1 key trigger `<keytrig>` | `00 2E` | 0–1 (OFF, ON) | `lfokeytrig` |
-| LFO1 rate `<rate>` | `00 2F` | 0–127 | `lforate` |
-| LFO1 level offset `<Offset>` | `00 30` | 0–4 (-100, -50, 0, +50, +100) | `lfooffset` |
-| LFO1 delay time `<Delay>` | `00 31` | 0–127 | `lfodelay` |
-| LFO1 fade mode `<Mode>` | `00 32` | 0–3 (KEY-ON-IN, KEY-ON-OUT, KEY-OFF-IN, KEY-OFF-OUT) | `lfofade` |
-| LFO1 fade time `<Fade>` | `00 33` | 0–127 | `lfofadetime` |
-| LFO1 external sync `<extsync>` | `00 34` | 0–2 (OFF, CLOCK, TAP) | `lfosync` |
-| LFO2 waveform `<form>` | `00 35` | 0–7 (TRI, SIN, SAW, SQR, TRP, S&H, RND, CHS) | `lfowave2` |
-| LFO2 key trigger `<keytrig>` | `00 36` | 0–1 (OFF, ON) | `lfokeytrig2` |
-| LFO2 rate `<rate>` | `00 37` | 0–127 | `lforate2` |
-| LFO2 level offset `<Offset>` | `00 38` | 0–4 (-100, -50, 0, +50, +100) | `lfooffset2` |
-| LFO2 delay time `<Delay>` | `00 39` | 0–127 | `lfodelay2` |
-| LFO2 fade mode `<Mode>` | `00 3A` | 0–3 (KEY-ON-IN, KEY-ON-OUT, KEY-OFF-IN, KEY-OFF-OUT) | `lfofade2` |
-| LFO2 fade time `<Fade>` | `00 3B` | 0–127 | `lfofadetime2` |
-| LFO2 external sync `<extsync>` | `00 3C` | 0–2 (OFF, CLOCK, TAP) | `lfosync2` |
+| LFO1 waveform `<form>` | `00 2D` | 0–7 (TRI, SIN, SAW, SQR, TRP, S&H, RND, CHS) | `wave` |
+| LFO1 key trigger `<keytrig>` | `00 2E` | 0–1 (OFF, ON) | `keytrig` |
+| LFO1 rate `<rate>` | `00 2F` | 0–127 | `rate` |
+| LFO1 level offset `<Offset>` | `00 30` | 0–4 (-100, -50, 0, +50, +100) | `offset` |
+| LFO1 delay time `<Delay>` | `00 31` | 0–127 | `delay` |
+| LFO1 fade mode `<Mode>` | `00 32` | 0–3 (KEY-ON-IN, KEY-ON-OUT, KEY-OFF-IN, KEY-OFF-OUT) | `fade` |
+| LFO1 fade time `<Fade>` | `00 33` | 0–127 | `fadetime` |
+| LFO1 external sync `<extsync>` | `00 34` | 0–2 (OFF, CLOCK, TAP) | `sync` |
+| LFO2 waveform `<form>` | `00 35` | 0–7 (TRI, SIN, SAW, SQR, TRP, S&H, RND, CHS) | `wave` |
+| LFO2 key trigger `<keytrig>` | `00 36` | 0–1 (OFF, ON) | `keytrig` |
+| LFO2 rate `<rate>` | `00 37` | 0–127 | `rate` |
+| LFO2 level offset `<Offset>` | `00 38` | 0–4 (-100, -50, 0, +50, +100) | `offset` |
+| LFO2 delay time `<Delay>` | `00 39` | 0–127 | `delay` |
+| LFO2 fade mode `<Mode>` | `00 3A` | 0–3 (KEY-ON-IN, KEY-ON-OUT, KEY-OFF-IN, KEY-OFF-OUT) | `fade` |
+| LFO2 fade time `<Fade>` | `00 3B` | 0–127 | `fadetime` |
+| LFO2 external sync `<extsync>` | `00 3C` | 0–2 (OFF, CLOCK, TAP) | `sync` |
 
 ### LFO depth 1:2
 
+CLI
+`jv1080-cli set patch lfo(1-2) <cli-name> <val>`
+
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Pitch LFO1 depth `<Pitch>` | `00 4E` | 0–126 (-63–+63) | `pitchlfo1` |
-| Pitch LFO2 depth `<Pitch>` | `00 4F` | 0–126 (-63–+63) | `pitchlfo2` |
-| Filter LFO1 depth `<TVF>` | `00 63` | 0–126 (-63–+63) | `filterlfo1` |
-| Filter LFO2 depth `<TVF>` | `00 64` | 0–126 (-63–+63) | `filterlfo2` |
-| Amplitude LFO1 depth `<TVA>` | `00 75` | 0–126 (-63–+63) | `amplfo1` |
-| Amplitude LFO2 depth `<TVA>` | `00 76` | 0–126 (-63–+63) | `amplfo2` |
-| Pan LFO1 depth `<PAN>` | `00 7B` | 0–126 (-63–+63) | `panlfo1` |
-| Pan LFO2 depth `<PAN>` | `00 7C` | 0–126 (-63–+63) | `panlfo2` |
+| Pitch LFO1 depth `<Pitch>` | `00 4E` | 0–126 (-63–+63) | `pitch` |
+| Pitch LFO2 depth `<Pitch>` | `00 4F` | 0–126 (-63–+63) | `pitch` |
+| Filter LFO1 depth `<TVF>` | `00 63` | 0–126 (-63–+63) | `filter` |
+| Filter LFO2 depth `<TVF>` | `00 64` | 0–126 (-63–+63) | `filter` |
+| Amplitude LFO1 depth `<TVA>` | `00 75` | 0–126 (-63–+63) | `amp` |
+| Amplitude LFO2 depth `<TVA>` | `00 76` | 0–126 (-63–+63) | `amp` |
+| Pan LFO1 depth `<PAN>` | `00 7B` | 0–126 (-63–+63) | `pan`
+| Pan LFO2 depth `<PAN>` | `00 7C` | 0–126 (-63–+63) | `pan` |
 
 ## Pitch
 
 All parameters in this section are per Tone (*1-3-2).
+
+CLI
+`jv1080-cli set patch pitch tone(1-4) <cli-name> <val>`
+
 
 ### PITCH
 
@@ -331,30 +371,36 @@ All parameters in this section are per Tone (*1-3-2).
 
 ### PCH ENV DPT (pitch envelope depth)
 
+`jv1080-cli set patch pitch tone(1-4) env <cli-name> <val>`
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Pitch envelope depth `<Envelope Depth>` | `00 41` | 0–24 (-12–+12) | `envdepth` |
-| Pitch env velocity sensitivity `<Velocity Sens>` | `00 42` | 0–125 (-100–+150 %) | `envvel` |
+| Pitch envelope depth `<Envelope Depth>` | `00 41` | 0–24 (-12–+12) | `depth` |
+| Pitch env velocity sensitivity `<Velocity Sens>` | `00 42` | 0–125 (-100–+150 %) | `velsense` |
 
 ### PCH TIME ENV (pitch time envelope)
 
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Pitch env velocity time 1 sens. `<V-T1>` | `00 43` | 0–14 (15-step list) | `envvt1` |
-| Pitch env velocity time 4 sens. `<V-T4>` | `00 44` | 0–14 (same list) | `envvt4` |
-| Pitch env time keyfollow `<Time Keyfollow>` | `00 45` | 0–14 (same list) | `envkeyfollow` |
+| Pitch env velocity time 1 sens. `<V-T1>` | `00 43` | 0–14 (15-step list) | `vt1` |
+| Pitch env velocity time 4 sens. `<V-T4>` | `00 44` | 0–14 (same list) | `vt4` |
+| Pitch env time keyfollow `<Time Keyfollow>` | `00 45` | 0–14 (same list) | `keyfollow` |
 
 ### PCH ENVELOPE (pitch envelope)
 
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Pitch env time 1–4 `<T1>`–`<T4>` | `00 46`–`00 49` | 0–127 each | `envt1`–`envt4` |
-| Pitch env level 1–4 `<L1>`–`<L4>` | `00 4A`–`00 4D` | 0–126 (-63–+63) each | `envl1`–`envl4` |
+| Pitch env time 1–4 `<T1>`–`<T4>` | `00 46`–`00 49` | 0–127 each | `t1`–`t4` |
+| Pitch env level 1–4 `<L1>`–`<L4>` | `00 4A`–`00 4D` | 0–126 (-63–+63) each | `l1`–`l4` |
 
 ## TVF
 
 All parameters in this section are per Tone (*1-3-2). The cutoff/resonance
 names match `tvfParams` in `cmd/jv1080-cli/params.go`.
+
+CLI
+`jv1080-cli set patch tvf tone(1-4) <cli-name> <val>`
+
 
 ### FILTER
 
@@ -370,28 +416,40 @@ names match `tvfParams` in `cmd/jv1080-cli/params.go`.
 
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| TVF env velocity sensitivity `<v-sens>` | `00 57` | 0–125 (-100–+150 %) | `envvel` |
-| TVF env velocity curve `<V-Curve>` | `00 56` | 0–6 (1–7) | `envcurve` |
-| Resonance velocity sensitivity `<V-Resonance>` | `00 54` | 0–125 (-100–+150 %) | `resvel` |
+| TVF env velocity sensitivity `<v-sens>` | `00 57` | 0–125 (-100–+150 %) | `velsens` |
+| TVF env velocity curve `<V-Curve>` | `00 56` | 0–6 (1–7) | `velcurve` |
+| Resonance velocity sensitivity `<V-Resonance>` | `00 54` | 0–125 (-100–+150 %) | `velres` |
 
 ### TVF TIME ENV (TVF time envelope)
 
+CLI
+`jv1080-cli set patch tvf tone(1-4) env <cli-name> <val>`
+
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Filter env velocity time 1 sens. `<V-T1>` | `00 58` | 0–14 (15-step list) | `envvt1` |
-| Filter env velocity time 4 sens. `<V-T4>` | `00 59` | 0–14 (same list) | `envvt4` |
-| Filter env time keyfollow `<Time Keyfollow>` | `00 5A` | 0–14 (same list) | `envkeyfollow` |
+| Filter env velocity time 1 sens. `<V-T1>` | `00 58` | 0–14 (15-step list) | `vt1` |
+| Filter env velocity time 4 sens. `<V-T4>` | `00 59` | 0–14 (same list) | `vt4` |
+| Filter env time keyfollow `<Time Keyfollow>` | `00 5A` | 0–14 (same list) | `keyfollow` |
 
 ### TVF ENVELOPE
 
+CLI
+`jv1080-cli set patch tvf tone(1-4) env <cli-name> <val>`
+
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Filter env time 1–4 `<T1>`–`<T4>` | `00 5B`–`00 5E` | 0–127 each | `envt1`–`envt4` |
-| Filter env level 1–4 `<L1>`–`<L4>` | `00 5F`–`00 62` | 0–127 each | `envl1`–`envl4` |
+| Filter env time 1–4 `<T1>`–`<T4>` | `00 5B`–`00 5E` | 0–127 each | `t1`–`t4` |
+| Filter env level 1–4 `<L1>`–`<L4>` | `00 5F`–`00 62` | 0–127 each | `l1`–`l4` |
 
 ## TVA
 
 All parameters in this section are per Tone (*1-3-2).
+
+### CLI
+`jv1080-cli set patch tva tone(1-4) <cli-name> <val>`
+
 
 ### TVA
 
@@ -420,15 +478,19 @@ All parameters in this section are per Tone (*1-3-2).
 
 ### TVA TIME ENV (TVA time envelope)
 
+CLI
+`jv1080-cli set patch tva tone(1-4) env <cli-name> <val>`
+
+
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Level env velocity time 1 sens. `<V-T1>` | `00 6B` | 0–14 (15-step list) | `envvt1` |
-| Level env velocity time 4 sens. `<V-T4>` | `00 6C` | 0–14 (same list) | `envvt4` |
-| Level env time keyfollow `<Time Keyfollow>` | `00 6D` | 0–14 (same list) | `envkeyfollow` |
+| Level env velocity time 1 sens. `<V-T1>` | `00 6B` | 0–14 (15-step list) | `vt1` |
+| Level env velocity time 4 sens. `<V-T4>` | `00 6C` | 0–14 (same list) | `vt4` |
+| Level env time keyfollow `<Time Keyfollow>` | `00 6D` | 0–14 (same list) | `keyfollow` |
 
 ### TVA ENVELOPE
 
 | Parameter | Offset | Valid values (SysEx) | CLI name |
 | --- | --- | --- | --- |
-| Level env time 1–4 `<T1>`–`<T4>` | `00 6E`–`00 71` | 0–127 each | `envt1`–`envt4` |
-| Level env level 1–3 `<L1>`–`<L3>` | `00 72`–`00 74` | 0–127 each | `envl1`–`envl3` |
+| Level env time 1–4 `<T1>`–`<T4>` | `00 6E`–`00 71` | 0–127 each | `t1`–`t4` |
+| Level env level 1–3 `<L1>`–`<L3>` | `00 72`–`00 74` | 0–127 each | `l1`–`l3` |
