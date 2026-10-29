@@ -323,6 +323,43 @@ func readAddress(c *jv1080.Client, args []string) error {
 	return nil
 }
 
+// formatValue formats a raw parameter value in decimal, applying speaking
+// notations where they exist (pan l/r/center, signed coarse/fine).
+func formatValue(name string, data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if len(data) == 2 {
+		return strconv.Itoa(rawValue(data))
+	}
+	switch normalize(name) {
+	case "pan":
+		v := int(data[0])
+		switch {
+		case v == 64:
+			return "center (64)"
+		case v < 64:
+			return fmt.Sprintf("l%d (%d)", 64-v, v)
+		default:
+			return fmt.Sprintf("r%d (%d)", v-64, v)
+		}
+	case "coarse":
+		return fmt.Sprintf("%d (%d)", int(data[0])-48, data[0])
+	case "fine":
+		return fmt.Sprintf("%d (%d)", int(data[0])-50, data[0])
+	}
+	return strconv.Itoa(int(data[0]))
+}
+
+// rawValue reads the raw value of a parameter: the plain byte, or the
+// combined number for nibblized (2-byte) parameters.
+func rawValue(data []byte) int {
+	if len(data) == 2 {
+		return int(data[0])<<4 | int(data[1])
+	}
+	return int(data[0])
+}
+
 // readCommon reads a patch common parameter of the temporary patch.
 func readCommon(c *jv1080.Client, args []string) error {
 	if len(args) != 1 {
@@ -336,7 +373,7 @@ func readCommon(c *jv1080.Client, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("common %s: [%s]\n", args[0], message.Hex(data))
+	fmt.Printf("common %s: %s\n", args[0], formatValue(args[0], data))
 	return nil
 }
 
@@ -358,7 +395,7 @@ func readTone(c *jv1080.Client, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("tone %d %s: [%s]\n", tone, args[1], message.Hex(data))
+	fmt.Printf("tone %d %s: %s\n", tone, args[1], formatValue(args[1], data))
 	return nil
 }
 

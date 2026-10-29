@@ -118,6 +118,29 @@ func TestToneParam(t *testing.T) {
 	}
 }
 
+func TestFormatValue(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"level", []byte{44}, "44"},
+		{"level", []byte{0x7F}, "127"},
+		{"pan", []byte{51}, "l13 (51)"},
+		{"pan", []byte{77}, "r13 (77)"},
+		{"pan", []byte{64}, "center (64)"},
+		{"coarse", []byte{36}, "-12 (36)"},
+		{"fine", []byte{75}, "25 (75)"},
+		{"wave", []byte{0x0C, 0x01}, "193"}, // nibblized raw 0xC1 = 193 -> wave 194
+		{"switch", []byte{1}, "1"},
+	}
+	for _, c := range cases {
+		if got := formatValue(c.name, c.data); got != c.want {
+			t.Errorf("formatValue(%q, % X) = %q, want %q", c.name, c.data, got, c.want)
+		}
+	}
+}
+
 func TestWaveAndTVFParam(t *testing.T) {
 	if off, _, err := waveParam("gain"); err != nil || off != 0x05 {
 		t.Errorf("waveParam(gain) = %d, %v", off, err)
