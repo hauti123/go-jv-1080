@@ -288,6 +288,35 @@ func (c *Client) StorePerformance(number int, p *Performance) error {
 	return nil
 }
 
+// PatchParameterAddress returns the SysEx address of a single patch
+// parameter. For BankUser the parameter lives in the user patch number
+// (1-128); for all other banks in the patch-mode temporary patch (preset,
+// GM and expansion banks are read-only). The parameter is identified by
+// its block ("common" or "tone"), the tone number (1-4, 0 for common) and
+// the byte offset within the block.
+func PatchParameterAddress(bank Bank, number int, block string, tone int, offset int) (message.Address, error) {
+	var area message.Address
+	if bank == BankUser {
+		if number < 1 || number > 128 {
+			return message.Address{}, fmt.Errorf("jv1080: user patch number %d out of range 1-128", number)
+		}
+		area = userPatchArea(number)
+	} else {
+		area = TemporaryPatchArea()
+	}
+	switch block {
+	case "common":
+		return area.Add(offset), nil
+	case "tone":
+		if tone < 1 || tone > 4 {
+			return message.Address{}, fmt.Errorf("jv1080: tone %d out of range 1-4", tone)
+		}
+		return patchToneArea(area, tone).Add(offset), nil
+	default:
+		return message.Address{}, fmt.Errorf("jv1080: unknown patch block %q", block)
+	}
+}
+
 // SetPatchParameter updates a single parameter of a patch on the device.
 // For BankUser the parameter is written to the user patch number (1-128);
 // for all other banks it is written to the patch-mode temporary patch
@@ -297,26 +326,9 @@ func (c *Client) StorePerformance(number int, p *Performance) error {
 // parameter bytes (one byte, or two nibbles for nibblized parameters such
 // as the wave number).
 func (c *Client) SetPatchParameter(bank Bank, number int, block string, tone int, offset int, value []byte) error {
-	var area message.Address
-	if bank == BankUser {
-		if number < 1 || number > 128 {
-			return fmt.Errorf("jv1080: user patch number %d out of range 1-128", number)
-		}
-		area = userPatchArea(number)
-	} else {
-		area = TemporaryPatchArea()
-	}
-	var addr message.Address
-	switch block {
-	case "common":
-		addr = area.Add(offset)
-	case "tone":
-		if tone < 1 || tone > 4 {
-			return fmt.Errorf("jv1080: tone %d out of range 1-4", tone)
-		}
-		addr = patchToneArea(area, tone).Add(offset)
-	default:
-		return fmt.Errorf("jv1080: unknown patch block %q", block)
+	addr, err := PatchParameterAddress(bank, number, block, tone, offset)
+	if err != nil {
+		return err
 	}
 	return c.sendDataSet(addr, value)
 }
