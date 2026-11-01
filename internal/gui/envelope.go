@@ -120,6 +120,13 @@ func (e *Envelope) relayout() {
 	}
 }
 
+func absF(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func roundF(v float32) float32 {
 	if v < 0 {
 		return float32(int(v - 0.5))
@@ -247,12 +254,20 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 				continue
 			}
 			if !e.haveLast {
-				// first drag event: same frame as all following ones; just anchor
+				// first drag event: anchor only, no value change
 				e.lastDrag = pe.Position
 				e.haveLast = true
 				continue
 			}
 			dx, dy := pe.Position.X-e.lastDrag.X, pe.Position.Y-e.lastDrag.Y
+			// A one-time coordinate-frame switch (e.g. when the pointer grab
+			// takes effect) shows up as an implausibly large delta; skip it
+			// and re-anchor instead of applying it.
+			if absF(dx) > float32(w) || absF(dy) > float32(h) {
+				log.Printf("ENV drag: handle=%d frame-switch skipped delta=(%.1f,%.1f)", e.dragIdx, dx, dy)
+				e.lastDrag = pe.Position
+				continue
+			}
 			e.lastDrag = pe.Position
 			e.dragBy(e.dragIdx, dx, dy, iw, ih)
 			e.emit(e.dragIdx)

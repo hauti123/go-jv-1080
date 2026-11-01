@@ -164,3 +164,37 @@ func TestHitTestSelectsPressedHandle(t *testing.T) {
 		}
 	}
 }
+
+// TestDragFrameSwitchSkipped pins that a one-time huge delta (coordinate
+// frame switch when the grab takes effect) is skipped and re-anchored, not
+// applied — small real drags around it still work.
+func TestDragFrameSwitchSkipped(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+	iw, ih := float32(508), float32(126)
+	w, h := 846, 263
+	i := 2
+	e.beginDrag(i, 1, f32.Pt(100, 50))
+	// simulate event stream: anchor, then frame switch (huge delta), then real drags
+	pos := f32.Pt(100, 50)
+	e.lastDrag = pos
+	e.haveLast = true
+	// frame switch event
+	pos = f32.Pt(100-2*float32(w), 50-2*float32(h)) // frame switch: delta beyond widget size
+	dx, dy := pos.X-e.lastDrag.X, pos.Y-e.lastDrag.Y
+	if absF(dx) > float32(w) || absF(dy) > float32(h) {
+		e.lastDrag = pos // skipped, re-anchored
+	} else {
+		t.Fatal("expected frame switch to be detected")
+	}
+	if e.times[i] != 40 {
+		t.Fatalf("frame switch changed value: t=%d, want 40", e.times[i])
+	}
+	// real drag +10px right
+	pos = pos.Add(f32.Pt(10, 0))
+	e.lastDrag = pos
+	e.dragBy(i, 10, 0, iw, ih)
+	if e.times[i] != 50 {
+		t.Errorf("after real +10px drag: t=%d, want 50", e.times[i])
+	}
+}
