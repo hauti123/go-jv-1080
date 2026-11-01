@@ -2,6 +2,7 @@ package gui
 
 import (
 	"image"
+	"log"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -112,6 +113,8 @@ func (e *Envelope) relayout() {
 		cum += clampInt(e.times[i], 0, 127)
 		e.points[i].X = clampf01(float32(cum) / envMaxTime)
 		e.points[i].Y = clampf01((float32(clampInt(e.levels[i], -63, 63)) + 63) / 126)
+		log.Printf("ENV relayout: point %d cum=%d -> x=%.4f (%.1f px of 508), level=%d -> y=%.4f",
+			i, cum, e.points[i].X, e.points[i].X*envMaxTime, clampInt(e.levels[i], -63, 63), e.points[i].Y)
 	}
 }
 
@@ -235,6 +238,8 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 					best, bestD = i, d
 				}
 			}
+			log.Printf("ENV press: pos=(%.1f,%.1f) -> handle %d (dist %.1f), handle px=%v",
+				pe.Position.X, pe.Position.Y, best, bestD, px(e.points[best]))
 			e.beginDrag(best, pe.PointerID, pe.Position)
 			gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
 			e.active = best
@@ -288,6 +293,8 @@ func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point) {
 	e.start = pos
 	e.startTimes = e.times
 	e.startLevels = e.levels
+	log.Printf("ENV drag-begin: handle=%d pointer=%v press=(%.1f,%.1f) times=%v levels=%v points=%v",
+		i, id, pos.X, pos.Y, e.times, e.levels, e.points)
 }
 
 // dragTo moves point i by the drag delta (pos - e.start) in screen pixels,
@@ -301,11 +308,16 @@ func (e *Envelope) dragTo(i int, pos f32.Point, iw, ih float32) {
 	if iw <= 0 || ih <= 0 {
 		return
 	}
-	dt := int(roundF((pos.X - e.start.X) / iw * envMaxTime))
-	dl := int(roundF(-(pos.Y - e.start.Y) / ih * 126))
+	rawDX, rawDY := pos.X-e.start.X, pos.Y-e.start.Y
+	dt := int(roundF(rawDX / iw * envMaxTime))
+	dl := int(roundF(-rawDY / ih * 126))
+	oldT, oldL := e.times[i], e.levels[i]
 	e.setTime(i, e.startTimes[i]+dt)
 	e.levels[i] = clampInt(e.startLevels[i]+dl, -63, 63)
 	e.relayout()
+	log.Printf("ENV drag: handle=%d pos=(%.1f,%.1f) start=(%.1f,%.1f) rawDelta=(%.1f,%.1f) iw=%.1f ih=%.1f -> dt=%d dl=%d | t%d %d->%d l%d %d->%d | times=%v levels=%v | points=%v",
+		i, pos.X, pos.Y, e.start.X, e.start.Y, rawDX, rawDY, iw, ih, dt, dl,
+		i, oldT, e.times[i], i, oldL, e.levels[i], e.times, e.levels, e.points)
 }
 
 // setTime sets the relative time (segment length) of point i to v,
@@ -322,6 +334,7 @@ func (e *Envelope) setTime(i, v int) {
 		}
 	}
 	v = clampInt(v, 0, envMaxTime-others)
+	log.Printf("ENV setTime: handle=%d requested=%d clamped=%d (others sum=%d) old=%d", i, v, v, others, e.times[i])
 	e.times[i] = v
 	// following segments are untouched, so relayout() shifts their
 	// cumulative pixel positions by the same delta automatically
@@ -333,5 +346,6 @@ func (e *Envelope) emit(i int) {
 		return
 	}
 	t, l := e.Point(i)
+	log.Printf("ENV emit: handle=%d -> %s=%d %s=%d", i, e.TimeKeys[i], t, e.LevelKeys[i], l)
 	e.OnChange(e.TimeKeys[i], t, e.LevelKeys[i], l)
 }
