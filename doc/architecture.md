@@ -53,12 +53,12 @@ Parameters are addressed with path-like keys; only the patch-mode
 temporary patch is supported for now (`patch/user/N/...` comes later):
 
 - `patch/temp/common/level` — raw 0-127
-- `patch/temp/common/pan` — UI value `"C"`, `"L1".."L63"`, `"R1".."R63"` (wire 0-127, 64 = C)
+- `patch/temp/common/pan` — UI value signed -63..+63 (0 = C), or `"C"`/`"L1".."L63"`/`"R1".."R63"`; wire 0-127 with 64 = C, both start at 0 = center
 - `patch/temp/common/octave` — UI value -3..+3 (wire 0-6)
 - `patch/temp/tone/<n>/<name>` — tone parameters, n = 1-4
 
 The mapping from key to SysEx address and the UI-value ↔ wire-byte
-conversion live solely in `internal/jv1080` (`params.go`,
+conversion live solely in `internal/jv1080` (`params.go`; UI and wire both start at 0 = center for pan, so -1 → wire 63 = L1, +1 → wire 65 = R1),
 `Client.SetParameter`/`GetParameter`/`OnParameterChange`). The GUI glue
 layer (`cmd/jv1080-gui`) and the widgets never deal with addresses,
 offsets or raw bytes.

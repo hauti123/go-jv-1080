@@ -16,7 +16,7 @@ func TestResolveParamKeys(t *testing.T) {
 		maxVal int
 	}{
 		{"patch/temp/common/level", message.Address{0x03, 0x00, 0x00, 0x2E}, KindRaw, 0, 127},
-		{"patch/temp/common/pan", message.Address{0x03, 0x00, 0x00, 0x2F}, KindPan, 0, 127},
+		{"patch/temp/common/pan", message.Address{0x03, 0x00, 0x00, 0x2F}, KindPan, -63, 63},
 		{"patch/temp/common/octave", message.Address{0x03, 0x00, 0x00, 0x41}, KindBipolar, -3, 3},
 		{"patch/temp/tone/1/level", message.Address{0x03, 0x00, 0x10, 0x65}, KindRaw, 0, 127},
 		{"patch/temp/tone/4/cutoff", message.Address{0x03, 0x00, 0x16, 0x51}, KindRaw, 0, 127},
@@ -71,12 +71,13 @@ func TestEncodeDecodeBipolar(t *testing.T) {
 
 func TestEncodeDecodePan(t *testing.T) {
 	p, _ := resolveParam("patch/temp/common/pan")
+	// UI and wire both start at 0 = center: UI -63..+63 maps to wire 1..127
 	cases := []struct {
 		ui   any
 		wire byte
 	}{
 		{"C", 64}, {"center", 64}, {"L63", 1}, {"L1", 63}, {"R1", 65}, {"R63", 127},
-		{0, 0}, {127, 127}, {64, 64},
+		{0, 64}, {-1, 63}, {-63, 1}, {1, 65}, {63, 127},
 	}
 	for _, c := range cases {
 		data, err := p.EncodeValue(c.ui)
@@ -90,10 +91,15 @@ func TestEncodeDecodePan(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantStr := rawToPan(int(c.wire))
-		if back.(string) != wantStr {
-			t.Errorf("pan decode(%d) = %q, want %q", c.wire, back, wantStr)
+		wantUI := rawToPan(int(c.wire))
+		if back.(int) != wantUI {
+			t.Errorf("pan decode(%d) = %v, want %d", c.wire, back, wantUI)
 		}
+	}
+	// one tick left of center in the GUI must be wire 63 (L1), not 0 (L64)
+	data, _ := p.EncodeValue(-1)
+	if data[0] != 63 {
+		t.Errorf("pan -1: wire = %d, want 63 (L1)", data[0])
 	}
 	if _, err := p.EncodeValue("L64"); err == nil {
 		t.Error("EncodeValue(L64) succeeded, want error")
@@ -101,13 +107,16 @@ func TestEncodeDecodePan(t *testing.T) {
 	if _, err := p.EncodeValue("X9"); err == nil {
 		t.Error("EncodeValue(X9) succeeded, want error")
 	}
+	if _, err := p.EncodeValue(64); err == nil {
+		t.Error("EncodeValue(64) succeeded, want range error (> +63)")
+	}
 }
 
 func TestRawToPan(t *testing.T) {
-	cases := map[int]string{0: "L64", 1: "L63", 63: "L1", 64: "C", 65: "R1", 127: "R63"}
+	cases := map[int]int{0: -64, 1: -63, 63: -1, 64: 0, 65: 1, 127: 63}
 	for raw, want := range cases {
 		if got := rawToPan(raw); got != want {
-			t.Errorf("rawToPan(%d) = %q, want %q", raw, got, want)
+			t.Errorf("rawToPan(%d) = %d, want %d", raw, got, want)
 		}
 	}
 }

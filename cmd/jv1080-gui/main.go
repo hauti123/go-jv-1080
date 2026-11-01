@@ -173,11 +173,11 @@ func (u *ui) applyParam(key string, value any) {
 }
 
 // panUIToKnob converts a pan UI value from the device layer ("C", "L13",
-// "R13" or raw 0-127) into the knob's -63..+63 range.
+// "R13" or signed -63..+63) into the knob's -63..+63 range.
 func panUIToKnob(value any) int {
 	switch v := value.(type) {
 	case int:
-		return v - 64
+		return v // device layer already returns signed UI units
 	case string:
 		s := v
 		if len(s) >= 2 && (s[0] == 'L' || s[0] == 'R') {

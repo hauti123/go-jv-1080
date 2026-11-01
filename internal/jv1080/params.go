@@ -62,13 +62,13 @@ var tempPatchParams = []paramSpec{
 	{name: "name", block: "common", offset: 0x00, kind: KindRaw, min: 0, max: 0}, // 12 ASCII bytes, handled specially
 	{name: "efxtype", block: "common", offset: 0x0C, kind: KindRaw, min: 0, max: 39},
 	{name: "level", block: "common", offset: 0x2E, kind: KindRaw, min: 0, max: 127},
-	{name: "pan", block: "common", offset: 0x2F, kind: KindPan, min: 0, max: 127},
+	{name: "pan", block: "common", offset: 0x2F, kind: KindPan, min: -63, max: 63}, // UI units -63..+63, 0 = C
 	{name: "octave", block: "common", offset: 0x41, kind: KindBipolar, min: -3, max: 3},
 	{name: "stretch", block: "common", offset: 0x42, kind: KindRaw, min: 0, max: 3},
 	{name: "priority", block: "common", offset: 0x43, kind: KindRaw, min: 0, max: 1},
 	{name: "switch", block: "tone/1", offset: 0x00, kind: KindRaw, min: 0, max: 1},
 	{name: "level", block: "tone/1", offset: 0x65, kind: KindRaw, min: 0, max: 127},
-	{name: "pan", block: "tone/1", offset: 0x77, kind: KindPan, min: 0, max: 127},
+	{name: "pan", block: "tone/1", offset: 0x77, kind: KindPan, min: -63, max: 63},
 	{name: "cutoff", block: "tone/1", offset: 0x51, kind: KindRaw, min: 0, max: 127},
 	{name: "resonance", block: "tone/1", offset: 0x53, kind: KindRaw, min: 0, max: 127},
 	{name: "coarse", block: "tone/1", offset: 0x3D, kind: KindBipolar, min: -48, max: 48},
@@ -148,6 +148,8 @@ func (p Param) EncodeValue(v any) ([]byte, error) {
 			return nil, fmt.Errorf("jv1080: %s: %w", p.Key, err)
 		}
 		return []byte{byte(raw)}, nil
+		// UI and wire both start at 0 = center: panToRaw maps signed
+		// UI units -63..+63 (and "C"/"Lxx"/"Rxx" strings) onto 0..127.
 	default:
 		if p.Key == "patch/temp/common/name" {
 			s, ok := v.(string)
@@ -185,7 +187,7 @@ func (p Param) DecodeValue(data []byte) (any, error) {
 	case KindBipolar:
 		return int(data[0]) + p.Min, nil
 	case KindPan:
-		return rawToPan(int(data[0])), nil
+		return rawToPan(int(data[0])), nil // returns signed UI units -63..+63, 0 = C
 	default:
 		if p.Key == "patch/temp/common/name" {
 			return decodeName(data), nil
@@ -194,15 +196,36 @@ func (p Param) DecodeValue(data []byte) (any, error) {
 	}
 }
 
-// panToRaw converts a pan UI value to the raw 0-127 wire byte. Accepts
-// "C"/"center" (64), "L1".."L63", "R1".."R63" and plain ints 0-127.
+// panToRaw converts a pan UI value to the raw 0-127 wire byte. UI and
+// wire both start at 0 = center, so a plain int is the signed UI value
+// -63..+63 and maps to 64+ui. Strings "C"/"center" (0), "L1".."L63"
+// (negative) and "R1".."R63" (positive) are also accepted.
 func panToRaw(v any) (int, error) {
+	ui, err := panToUI(v)
+	if err != nil {
+		return 0, err
+	}
+	if ui < -63 || ui > 63 {
+		return 0, fmt.Errorf("pan value %d out of range -63..+63", ui)
+	}
+	return 64 + ui, nil
+}
+
+// rawToPan converts a raw 0-127 wire byte to the signed UI pan value
+// -63..+63 (0 = C).
+func rawToPan(raw int) int {
+	return clamp(raw, 0, 127) - 64
+}
+
+// panToUI converts a pan UI value (signed int -63..+63, or "C"/"Lxx"/
+// "Rxx" string) to the signed UI value.
+func panToUI(v any) (int, error) {
 	switch t := v.(type) {
 	case string:
 		s := strings.ToLower(strings.TrimSpace(t))
 		switch s {
 		case "c", "center":
-			return 64, nil
+			return 0, nil
 		}
 		if len(s) >= 2 && (s[0] == 'l' || s[0] == 'r') {
 			n, err := strconv.Atoi(s[1:])
@@ -210,35 +233,21 @@ func panToRaw(v any) (int, error) {
 				return 0, fmt.Errorf("invalid pan %q (want C, L1-L63 or R1-R63)", t)
 			}
 			if s[0] == 'l' {
-				return 64 - n, nil
+				return -n, nil
 			}
-			return 64 + n, nil
+			return n, nil
 		}
 		n, err := strconv.Atoi(s)
 		if err != nil {
 			return 0, fmt.Errorf("invalid pan %q", t)
 		}
-		return clamp(n, 0, 127), nil
+		return n, nil
 	default:
 		n, err := toInt(v)
 		if err != nil {
 			return 0, err
 		}
-		return clamp(n, 0, 127), nil
-	}
-}
-
-// rawToPan converts a raw 0-127 wire byte to the UI pan string:
-// "C", "L1".."L63" or "R1".."R63".
-func rawToPan(raw int) string {
-	v := clamp(raw, 0, 127) - 64
-	switch {
-	case v == 0:
-		return "C"
-	case v < 0:
-		return "L" + strconv.Itoa(-v)
-	default:
-		return "R" + strconv.Itoa(v)
+		return n, nil
 	}
 }
 
