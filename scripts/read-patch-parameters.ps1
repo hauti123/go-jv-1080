@@ -230,14 +230,14 @@ foreach ($cmd in $readCommands) {
             # Use the CLI's error message (e.g. the timeout detail) as the
             # error text; fall back to the bare exit code.
             $msgLines = @($output | ForEach-Object { $_.ToString() } |
-                Where-Object { $_ -and $_ -notmatch "^(SEND|REC )\s*:" })
+                Where-Object { $_ -and $_ -notmatch "^(TX|RX)\s*:" })
             $errorText = if ($msgLines.Count -gt 0) { $msgLines[-1].Trim() } else { "exit code $exit" }
         } else {
             # The value line is the last one that does not start with
-            # SEND: or REC :, e.g. "common level: 100" or
+            # TX:/RX: log lines, e.g. "common level: 100" or
             # "tone 3 rate: 60".
             $valueLines = @($output | ForEach-Object { $_.ToString() } |
-                Where-Object { $_ -and $_ -notmatch "^(SEND|REC )\s*:" })
+                Where-Object { $_ -and $_ -notmatch "^(TX|RX)\s*:" })
             if ($valueLines.Count -gt 0) {
                 $last = $valueLines[-1]
                 $colon = $last.IndexOf(": ")

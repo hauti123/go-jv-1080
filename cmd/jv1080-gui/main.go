@@ -15,8 +15,6 @@
 //	-outnum int    MIDI output port number, used when -out is empty (default 0)
 //	-innum int     MIDI input port number, used when -in is empty (default 0)
 //	-devid string  device ID in hex (default "10" = unit 17)
-//	-bank string   patch bank (USER, PRESET A/B/C, GM, CARD A/B, EXP A/B/C/D)
-//	-number int    patch number 1-128 in the bank (default 1)
 //
 // Without a connected device the app still starts and shows the knobs; the
 // knobs then just do not send anything (an error is shown in the status
@@ -30,7 +28,6 @@ import (
 	"image"
 	"log"
 	"strconv"
-	"strings"
 	"sync"
 
 	"gioui.org/app"
@@ -42,6 +39,7 @@ import (
 	"go-jv-1080/internal/gui"
 	"go-jv-1080/internal/jv1080"
 	"go-jv-1080/internal/midi"
+	"go-jv-1080/internal/midi/message"
 )
 
 var (
@@ -50,54 +48,41 @@ var (
 	outNum   = flag.Int("outnum", 0, "MIDI output port number (used when -out is empty)")
 	inNum    = flag.Int("innum", 0, "MIDI input port number (used when -in is empty)")
 	deviceID = flag.String("devid", "10", "device ID in hex")
-	bankName = flag.String("bank", "USER", "patch bank")
-	number   = flag.Int("number", 1, "patch number 1-128 in the bank")
 )
 
-// parameter offsets in the patch common block, named like in jv1080-cli
-// (doc/patch-edit-mode-structure.md).
+// device parameter keys of the temporary patch (patch/temp/...), named
+// like in jv1080-cli. The GUI never deals with addresses or offsets; the
+// key -> SysEx mapping lives in internal/jv1080.
 const (
-	offsetLevel  = 0x2E // "level" 0-127
-	offsetPan    = 0x2F // "pan" 0-127, 64 = center
-	offsetOctave = 0x41 // "octave" 0-6 = -3..+3
+	keyLevel  = "patch/temp/common/level"
+	keyPan    = "patch/temp/common/pan"
+	keyOctave = "patch/temp/common/octave"
 )
 
 func main() {
 	flag.Parse()
-	bank, err := parseBank(*bankName)
-	if err != nil {
-		log.Fatalf("jv1080-gui: %v", err)
-	}
-	if *number < 1 || *number > 128 {
-		log.Fatalf("jv1080-gui: patch number %d out of range 1-128", *number)
-	}
-
-	ui := newUI(bank, *number)
+	ui := newUI()
 
 	dev, err := midi.OpenDevice(*outName, *inName, *outNum, *inNum)
 	if err != nil {
 		log.Printf("jv1080-gui: cannot open MIDI device (%v); running without device", err)
 	} else {
 		defer dev.Close()
+		// Log all raw MIDI messages sent and received in hex.
+		dev.SetLogger(func(direction string, msg []byte) {
+			log.Printf("MIDI %s: [%s]", direction, message.Hex(msg))
+		})
 		id, err := strconv.ParseUint(*deviceID, 16, 8)
 		if err != nil {
 			log.Fatalf("jv1080-gui: invalid device ID %q: %v", *deviceID, err)
 		}
-		client := jv1080.NewClient(dev, uint8(id))
-		ctrl := gui.NewJVController(client, bank, *number)
-		ctrl.RegisterCommonParams(
-			gui.PatchCommonParam("level", offsetLevel),
-			gui.PatchCommonParam("pan", offsetPan),
-			gui.PatchCommonParam("octave", offsetOctave),
-		)
-		ui.setController(ctrl)
-		unregister := ctrl.Attach(dev)
-		defer unregister()
+		ui.setDevice(jv1080.NewClient(dev, uint8(id)))
 	}
 
 	go func() {
 		w := new(app.Window)
 		w.Option(app.Title("JV-1080 Patch Common"), app.Size(unit.Dp(360), unit.Dp(220)))
+		ui.w = w
 		if err := ui.loop(w); err != nil {
 			log.Fatal(err)
 		}
@@ -105,84 +90,119 @@ func main() {
 	app.Main()
 }
 
-// ui holds the GUI state: the three knobs, the device controller and the
-// status line. All knob change callbacks run on the GUI goroutine.
+// ui holds the GUI state: the three knobs, the device client and the
+// status line. All knob change callbacks run on the GUI goroutine. The
+// knobs are bound to device parameters by their path-like keys; all
+// address/offset handling and value conversion happens in internal/jv1080.
 type ui struct {
 	th     gui.Theme
 	level  *gui.Knob
 	pan    *gui.Knob
 	octave *gui.Knob
 
-	mu         sync.Mutex
-	controller gui.Controller
-	status     string
-	// updates delivers device-originated parameter changes to the GUI
-	// goroutine.
-	updates chan gui.Param
+	mu      sync.Mutex
+	client  *jv1080.Client
+	status  string
+	updates chan paramUpdate
+	w       *app.Window // set once the window exists, for Invalidate
 }
 
-func newUI(bank jv1080.Bank, number int) *ui {
+// paramUpdate is a device-originated parameter change, delivered to the
+// GUI goroutine.
+type paramUpdate struct {
+	key   string
+	value any
+}
+
+func newUI() *ui {
 	u := &ui{
 		th:      gui.DefaultTheme(),
-		updates: make(chan gui.Param, 16),
+		updates: make(chan paramUpdate, 16),
+		status:  "patch/temp",
 	}
-	u.level = gui.NewKnob(gui.KnobMinMax, "LEVEL", 0, 127)
-	u.pan = gui.NewKnob(gui.KnobPan, "PAN", 0, 127)
-	u.octave = gui.NewKnob(gui.KnobBipolar, "OCTAVE", -3, 3)
-	u.level.OnChange = func(v int) { u.send(gui.PatchCommonParam("level", offsetLevel), v) }
-	u.pan.OnChange = func(v int) { u.send(gui.PatchCommonParam("pan", offsetPan), v) }
-	u.octave.OnChange = func(v int) { u.send(gui.PatchCommonParam("octave", offsetOctave), v+3) }
-	u.status = fmt.Sprintf("%s %d", bank, number)
+	u.level = gui.NewKnob(gui.KnobMinMax, "LEVEL", keyLevel, 0, 127)
+	u.pan = gui.NewKnob(gui.KnobPan, "PAN", keyPan, -64, 63)
+	u.octave = gui.NewKnob(gui.KnobBipolar, "OCTAVE", keyOctave, -3, 3)
+	u.level.OnChange = func(v int) { u.send(keyLevel, v) }
+	u.pan.OnChange = func(v int) { u.send(keyPan, v) }
+	u.octave.OnChange = func(v int) { u.send(keyOctave, v) }
 	return u
 }
 
-// setController installs the device controller and registers for updates.
-func (u *ui) setController(c gui.Controller) {
+// setDevice installs the device client and registers for parameter
+// updates, then reads the current values of the three parameters once.
+func (u *ui) setDevice(c *jv1080.Client) {
 	u.mu.Lock()
-	u.controller = c
+	u.client = c
 	u.mu.Unlock()
-	c.Update(func(p gui.Param, value []byte) {
+	c.OnParameterChange(func(key string, value any) {
+		// The MIDI receive callback runs on the driver's goroutine;
+		// hand the update to the GUI goroutine and wake it up.
 		select {
-		case u.updates <- p:
+		case u.updates <- paramUpdate{key: key, value: value}:
 		default:
 		}
+		if u.w != nil {
+			u.w.Invalidate()
+		}
 	})
-	// read the current values from the device once
-	for _, p := range []gui.Param{
-		gui.PatchCommonParam("level", offsetLevel),
-		gui.PatchCommonParam("pan", offsetPan),
-		gui.PatchCommonParam("octave", offsetOctave),
-	} {
-		if v, err := c.Get(p); err == nil && len(v) > 0 {
-			u.applyParam(p, int(v[0]))
+	for _, key := range []string{keyLevel, keyPan, keyOctave} {
+		if v, err := c.GetParameter(key); err == nil {
+			u.applyParam(key, v)
 		}
 	}
 }
 
-// send writes a changed parameter to the device immediately.
-func (u *ui) send(p gui.Param, raw int) {
+// send writes a changed parameter to the device immediately, addressed by
+// its path-like key with the UI value.
+func (u *ui) send(key string, value any) {
 	u.mu.Lock()
-	c := u.controller
+	c := u.client
 	u.mu.Unlock()
 	if c == nil {
 		u.setStatus("no device connected")
 		return
 	}
-	if err := c.Set(p, []byte{byte(raw)}); err != nil {
-		u.setStatus(fmt.Sprintf("write %s failed: %v", p.Name, err))
+	if err := c.SetParameter(key, value); err != nil {
+		u.setStatus(fmt.Sprintf("write %s failed: %v", key, err))
 	}
 }
 
-// applyParam sets the knob belonging to p without re-sending it.
-func (u *ui) applyParam(p gui.Param, raw int) {
-	switch p.Name {
-	case "level":
-		u.level.Set(raw)
-	case "pan":
-		u.pan.Set(raw)
-	case "octave":
-		u.octave.Set(raw - 3)
+// applyParam sets the knob bound to key without re-sending it.
+func (u *ui) applyParam(key string, value any) {
+	switch key {
+	case keyLevel:
+		if n, ok := value.(int); ok {
+			u.level.Set(n)
+		}
+	case keyPan:
+		u.pan.Set(panUIToKnob(value))
+	case keyOctave:
+		if n, ok := value.(int); ok {
+			u.octave.Set(n)
+		}
 	}
+}
+
+// panUIToKnob converts a pan UI value from the device layer ("C", "L13",
+// "R13" or signed -64..+63) into the knob's -64..+63 range.
+func panUIToKnob(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v // device layer already returns signed UI units
+	case string:
+		s := v
+		if len(s) >= 2 && (s[0] == 'L' || s[0] == 'R') {
+			var n int
+			fmt.Sscanf(s[1:], "%d", &n)
+			if s[0] == 'L' {
+				return -n
+			}
+			return n
+		}
+		return 0 // "C"
+	}
+	return 0
 }
 
 func (u *ui) setStatus(s string) {
@@ -206,22 +226,15 @@ func (u *ui) loop(w *app.Window) error {
 }
 
 func (u *ui) layout(gtx layout.Context, w *app.Window) layout.Dimensions {
-	// apply device-originated updates (drain the channel); each changed
-	// parameter is re-read from the device so only that parameter is
-	// updated in the UI
+	// apply device-originated updates (drain the channel); the callback
+	// already carries the key and the UI value, so only the one changed
+	// knob is updated
 	dirty := false
 	for {
 		select {
-		case p := <-u.updates:
-			u.mu.Lock()
-			c := u.controller
-			u.mu.Unlock()
-			if c != nil {
-				if v, err := c.Get(p); err == nil && len(v) > 0 {
-					u.applyParam(p, int(v[0]))
-					dirty = true
-				}
-			}
+		case up := <-u.updates:
+			u.applyParam(up.key, up.value)
+			dirty = true
 		default:
 			goto drained
 		}
@@ -257,14 +270,4 @@ drained:
 			}),
 		)
 	})
-}
-
-func parseBank(s string) (jv1080.Bank, error) {
-	s = strings.ToUpper(strings.TrimSpace(s))
-	for _, b := range jv1080.Banks {
-		if strings.ReplaceAll(b.String(), " ", "") == strings.ReplaceAll(s, " ", "") {
-			return b, nil
-		}
-	}
-	return 0, fmt.Errorf("unknown bank %q (want USER, PRESET A/B/C, GM, CARD A/B, EXP A/B/C/D)", s)
 }

@@ -54,6 +54,7 @@ type Device struct {
 	mu         sync.RWMutex
 	callbacks  []func(msg []byte)
 	sendLogger func(msg []byte)
+	logger     Logger
 	stop       func()
 	done       chan struct{}
 }
@@ -64,6 +65,34 @@ func (d *Device) SetSendLogger(logger func(msg []byte)) {
 	d.mu.Lock()
 	d.sendLogger = logger
 	d.mu.Unlock()
+}
+
+// Logger is called with every raw MIDI message sent to or received from
+// the device. The byte slice is only valid for the duration of the call.
+type Logger func(direction string, msg []byte)
+
+// SetLogger registers a logger that is called with every raw message
+// sent to ("TX") and received from ("RX") the device, after splitting
+// into individual messages. It returns a function that unregisters it.
+func (d *Device) SetLogger(logger Logger) (unregister func()) {
+	d.mu.Lock()
+	d.logger = logger
+	d.mu.Unlock()
+	return func() {
+		d.mu.Lock()
+		d.logger = nil
+		d.mu.Unlock()
+	}
+}
+
+// logf calls the registered logger, if any.
+func (d *Device) logf(direction string, msg []byte) {
+	d.mu.RLock()
+	logger := d.logger
+	d.mu.RUnlock()
+	if logger != nil {
+		logger(direction, msg)
+	}
 }
 
 // MessageHandler is called for every incoming MIDI message. The byte slice
@@ -105,6 +134,7 @@ func OpenDevice(outName, inName string, outNum, inNum int) (*Device, error) {
 
 func (d *Device) startListening() error {
 	stop, err := d.in.Listen(func(msg []byte, _ int32) {
+		d.logf("RX", msg)
 		d.mu.RLock()
 		cbs := append([]func([]byte){}, d.callbacks...)
 		d.mu.RUnlock()
@@ -147,6 +177,7 @@ func (d *Device) Send(msg []byte) error {
 	if logger != nil {
 		logger(msg)
 	}
+	d.logf("TX", msg)
 	return d.out.Send(msg)
 }
 
