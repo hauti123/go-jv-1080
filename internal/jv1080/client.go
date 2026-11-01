@@ -404,14 +404,22 @@ func (c *Client) GetParameter(key string) (any, error) {
 func ParamKeys() []string {
 	keys := make([]string, 0, len(tempPatchParams))
 	for _, spec := range tempPatchParams {
-		block := spec.block
-		if strings.HasPrefix(block, "tone/") {
-			keys = append(keys, "patch/temp/tone/"+strings.TrimPrefix(block, "tone/")+"/"+spec.name)
-		} else {
-			keys = append(keys, "patch/temp/"+block+"/"+spec.name)
-		}
+		keys = append(keys, paramKeyOf(spec))
 	}
 	return keys
+}
+
+// paramKeyOf renders the path-like key of a paramSpec.
+func paramKeyOf(spec paramSpec) string {
+	parts := strings.Split(spec.block, "/")
+	switch {
+	case spec.block == "common":
+		return "patch/temp/common/" + spec.name
+	case len(parts) == 2: // tone/N
+		return "patch/temp/tone/" + parts[1] + "/" + spec.name
+	default: // tone/N/<sub>
+		return "patch/temp/tone/" + parts[1] + "/" + parts[2] + "/" + spec.name
+	}
 }
 
 // OnParameterChange registers a callback that is invoked with the
@@ -473,14 +481,14 @@ func (c *Client) handleDeviceMessage(raw []byte) {
 func tempPatchKeyAt(off int) (string, bool) {
 	for _, spec := range tempPatchParams {
 		start := spec.offset
-		key := "patch/temp/" + spec.block + "/" + spec.name
+		key := paramKeyOf(spec)
+		parts := strings.Split(spec.block, "/")
 		if spec.block != "common" {
-			t, err := strconv.Atoi(strings.TrimPrefix(spec.block, "tone/"))
+			t, err := strconv.Atoi(parts[1])
 			if err != nil || t < 1 || t > 4 {
 				continue
 			}
 			start = (0x10+2*(t-1))*0x80 + spec.offset
-			key = "patch/temp/tone/" + strings.TrimPrefix(spec.block, "tone/") + "/" + spec.name
 		}
 		if off == start {
 			return key, true

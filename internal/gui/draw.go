@@ -79,6 +79,16 @@ func fillPolygon(gtx layout.Context, pts []f32.Point, col color.NRGBA) {
 	paint.FillShape(gtx.Ops, col, clip.Outline{Path: path.End()}.Op())
 }
 
+func strokePolyline(gtx layout.Context, pts []f32.Point, width float32, col color.NRGBA) {
+	var path clip.Path
+	path.Begin(gtx.Ops)
+	path.MoveTo(pts[0])
+	for _, p := range pts[1:] {
+		path.LineTo(p)
+	}
+	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: path.End(), Width: width}.Op())
+}
+
 func fillRect(gtx layout.Context, x, y, w, h float32, col color.NRGBA) {
 	paint.FillShape(gtx.Ops, col, clip.Rect{
 		Min: image.Pt(int(x), int(y)),

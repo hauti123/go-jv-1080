@@ -75,6 +75,17 @@ var tempPatchParams = []paramSpec{
 	{name: "fine", block: "tone/1", offset: 0x3E, kind: KindBipolar, min: -50, max: 50},
 	// tone 4 spot-check: the tone blocks repeat every 2 address bytes
 	{name: "cutoff", block: "tone/4", offset: 0x51, kind: KindRaw, min: 0, max: 127},
+	// pitch envelope of tone 1 (PCH ENVELOPE, doc/jv-1080-midi.md):
+	// times t1..t4 at 0x46..0x49 (0-127), levels l1..l4 at 0x4A..0x4D
+	// (0-126 = -63..+63)
+	{name: "t1", block: "tone/1/pitch", offset: 0x46, kind: KindRaw, min: 0, max: 127},
+	{name: "t2", block: "tone/1/pitch", offset: 0x47, kind: KindRaw, min: 0, max: 127},
+	{name: "t3", block: "tone/1/pitch", offset: 0x48, kind: KindRaw, min: 0, max: 127},
+	{name: "t4", block: "tone/1/pitch", offset: 0x49, kind: KindRaw, min: 0, max: 127},
+	{name: "l1", block: "tone/1/pitch", offset: 0x4A, kind: KindBipolar, min: -63, max: 63},
+	{name: "l2", block: "tone/1/pitch", offset: 0x4B, kind: KindBipolar, min: -63, max: 63},
+	{name: "l3", block: "tone/1/pitch", offset: 0x4C, kind: KindBipolar, min: -63, max: 63},
+	{name: "l4", block: "tone/1/pitch", offset: 0x4D, kind: KindBipolar, min: -63, max: 63},
 }
 
 // resolveParam maps a path-like key to its parameter definition and the
@@ -86,13 +97,16 @@ func resolveParam(key string) (Param, error) {
 		return Param{}, fmt.Errorf("jv1080: unsupported parameter key %q (want patch/temp/<block>/<name> or patch/temp/tone/<n>/<name>)", key)
 	}
 	var block, name string
-	if segs[2] == "tone" {
-		if len(segs) != 5 {
-			return Param{}, fmt.Errorf("jv1080: unsupported parameter key %q (want patch/temp/tone/<n>/<name>)", key)
-		}
-		block, name = "tone/"+segs[3], segs[4]
-	} else {
+	if len(segs) == 4 {
 		block, name = segs[2], segs[3]
+	} else if segs[2] == "tone" && len(segs) == 5 {
+		// "patch/temp/tone/<n>/<name>"
+		block, name = "tone/"+segs[3], segs[4]
+	} else if segs[2] == "tone" && len(segs) == 6 {
+		// sub-block of a tone, e.g. "patch/temp/tone/1/pitch/t1"
+		block, name = "tone/"+segs[3]+"/"+segs[4], segs[5]
+	} else {
+		return Param{}, fmt.Errorf("jv1080: unsupported parameter key %q (want patch/temp/<block>/<name> or patch/temp/tone/<n>/<sub>/<name>)", key)
 	}
 	for _, spec := range tempPatchParams {
 		if spec.block == block && spec.name == name {
@@ -101,16 +115,27 @@ func resolveParam(key string) (Param, error) {
 			switch {
 			case block == "common":
 				addr = area.Add(spec.offset)
-			default:
+			case strings.HasPrefix(block, "tone/") && strings.Count(block, "/") == 1:
 				// block "tone/N"
 				t, err := strconv.Atoi(strings.TrimPrefix(block, "tone/"))
 				if err != nil || t < 1 || t > 4 {
 					return Param{}, fmt.Errorf("jv1080: invalid tone block %q", block)
 				}
 				addr = PatchToneArea(area, t).Add(spec.offset)
+			default:
+				// sub-block "tone/N/<sub>"
+				parts := strings.Split(block, "/")
+				t, err := strconv.Atoi(parts[1])
+				if err != nil || t < 1 || t > 4 {
+					return Param{}, fmt.Errorf("jv1080: invalid tone block %q", block)
+				}
+				addr = PatchToneArea(area, t).Add(spec.offset)
 			}
 			key := "patch/temp/" + block + "/" + name
-			if strings.HasPrefix(block, "tone/") {
+			if strings.HasPrefix(block, "tone/") && strings.Count(block, "/") == 2 {
+				parts := strings.Split(block, "/")
+				key = "patch/temp/tone/" + parts[1] + "/" + parts[2] + "/" + name
+			} else if strings.HasPrefix(block, "tone/") {
 				key = "patch/temp/tone/" + strings.TrimPrefix(block, "tone/") + "/" + name
 			}
 			return Param{

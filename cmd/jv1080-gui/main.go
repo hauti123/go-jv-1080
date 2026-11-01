@@ -59,6 +59,12 @@ const (
 	keyOctave = "patch/temp/common/octave"
 )
 
+// pitch envelope of tone 1: 4 times + 4 levels (PCH ENVELOPE)
+var (
+	envTimeKeys  = [4]string{"patch/temp/tone/1/pitch/t1", "patch/temp/tone/1/pitch/t2", "patch/temp/tone/1/pitch/t3", "patch/temp/tone/1/pitch/t4"}
+	envLevelKeys = [4]string{"patch/temp/tone/1/pitch/l1", "patch/temp/tone/1/pitch/l2", "patch/temp/tone/1/pitch/l3", "patch/temp/tone/1/pitch/l4"}
+)
+
 func main() {
 	flag.Parse()
 	ui := newUI()
@@ -81,7 +87,7 @@ func main() {
 
 	go func() {
 		w := new(app.Window)
-		w.Option(app.Title("JV-1080 Patch Common"), app.Size(unit.Dp(360), unit.Dp(220)))
+		w.Option(app.Title("JV-1080 Patch Common"), app.Size(unit.Dp(520), unit.Dp(460)))
 		ui.w = w
 		if err := ui.loop(w); err != nil {
 			log.Fatal(err)
@@ -99,6 +105,7 @@ type ui struct {
 	level  *gui.Knob
 	pan    *gui.Knob
 	octave *gui.Knob
+	env    *gui.Envelope
 
 	mu      sync.Mutex
 	client  *jv1080.Client
@@ -126,6 +133,11 @@ func newUI() *ui {
 	u.level.OnChange = func(v int) { u.send(keyLevel, v) }
 	u.pan.OnChange = func(v int) { u.send(keyPan, v) }
 	u.octave.OnChange = func(v int) { u.send(keyOctave, v) }
+	u.env = gui.NewEnvelope("PITCH ENV T1", envTimeKeys, envLevelKeys)
+	u.env.OnChange = func(timeKey string, timeVal int, levelKey string, levelVal int) {
+		u.send(timeKey, timeVal)
+		u.send(levelKey, levelVal)
+	}
 	return u
 }
 
@@ -151,6 +163,22 @@ func (u *ui) setDevice(c *jv1080.Client) {
 			u.applyParam(key, v)
 		}
 	}
+	// read the pitch envelope once (SetAll so the x-order clamp does
+	// not interfere with loading)
+	var times, levels [4]int
+	for i := 0; i < 4; i++ {
+		if v, err := c.GetParameter(envTimeKeys[i]); err == nil {
+			if n, ok := v.(int); ok {
+				times[i] = n
+			}
+		}
+		if v, err := c.GetParameter(envLevelKeys[i]); err == nil {
+			if n, ok := v.(int); ok {
+				levels[i] = n
+			}
+		}
+	}
+	u.env.SetAll(times, levels)
 }
 
 // send writes a changed parameter to the device immediately, addressed by
@@ -180,6 +208,20 @@ func (u *ui) applyParam(key string, value any) {
 	case keyOctave:
 		if n, ok := value.(int); ok {
 			u.octave.Set(n)
+		}
+	default:
+		for i := 0; i < 4; i++ {
+			if key == envTimeKeys[i] || key == envLevelKeys[i] {
+				tv, lv := u.env.Point(i)
+				if n, ok := value.(int); ok {
+					if key == envTimeKeys[i] {
+						tv = n
+					} else {
+						lv = n
+					}
+				}
+				u.env.SetPoint(i, tv, lv)
+			}
 		}
 	}
 }
@@ -267,6 +309,11 @@ drained:
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.pan.Layout(gtx, &u.th) }),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.octave.Layout(gtx, &u.th) }),
 				)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return u.env.Layout(gtx, &u.th)
+				})
 			}),
 		)
 	})
