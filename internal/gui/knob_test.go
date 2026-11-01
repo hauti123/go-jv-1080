@@ -87,8 +87,8 @@ func TestKnobFormatBipolar(t *testing.T) {
 }
 
 func TestKnobFormatPan(t *testing.T) {
-	k := NewKnob(KnobPan, "PAN", "patch/temp/common/pan", -63, 63)
-	cases := map[int]string{-63: "L63", -1: "L1", 0: "C", 1: "R1", 63: "R63"}
+	k := NewKnob(KnobPan, "PAN", "patch/temp/common/pan", -64, 63)
+	cases := map[int]string{-64: "L64", -63: "L63", -1: "L1", 0: "C", 1: "R1", 63: "R63"}
 	for v, want := range cases {
 		k.Set(v)
 		if got := k.formatValue(); got != want {
@@ -104,9 +104,9 @@ func TestKnobFormatPan(t *testing.T) {
 	if math.Abs(k.angle()-MaxAngle) > 1e-9 {
 		t.Errorf("pan angle at R63 = %v, want %v", k.angle(), MaxAngle)
 	}
-	k.Set(-63)
+	k.Set(-64)
 	if math.Abs(k.angle()-MinAngle) > 1e-9 {
-		t.Errorf("pan angle at L63 = %v, want %v", k.angle(), MinAngle)
+		t.Errorf("pan angle at L64 = %v, want %v", k.angle(), MinAngle)
 	}
 	k.Set(-1)
 	if k.angle() >= 0 || k.angle() <= MinAngle {
@@ -143,7 +143,7 @@ func TestLitRangeCentered(t *testing.T) {
 		t.Errorf("litRange at -2 = [%v %v], want [-90 0]", from, to)
 	}
 	// pan at C
-	p := NewKnob(KnobPan, "PAN", "patch/temp/common/pan", -63, 63)
+	p := NewKnob(KnobPan, "PAN", "patch/temp/common/pan", -64, 63)
 	p.Set(0)
 	from, to = litRange(p)
 	if from != 0 || to != 0 {

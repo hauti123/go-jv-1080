@@ -49,7 +49,7 @@ type Knob struct {
 	Unit  string // optional, written in the free space between the scale ends
 	Key   string // device parameter key this knob is bound to, e.g. "patch/temp/common/level"
 
-	Min, Max int // value range in UI units (for KnobPan: -63..+63, 0 = C; for KnobBipolar: signed)
+	Min, Max int // value range in UI units (for KnobPan: -64..+63, 0 = C, -64 = L64; for KnobBipolar: signed)
 
 	value int
 
@@ -66,8 +66,9 @@ type Knob struct {
 }
 
 // NewKnob returns a knob with the given style, title, device parameter key
-// and value range in UI units. For KnobPan the range is -63..+63 (0 = C);
-// for KnobBipolar a signed range like -3..+3.
+// and value range in UI units. For KnobPan the range is -64..+63 (0 = C,
+// -64 = L64, matching the JV-1080 L64..R63 scale); for KnobBipolar a
+// signed range like -3..+3.
 func NewKnob(style KnobStyle, title, key string, min, max int) *Knob {
 	if max < min {
 		min, max = max, min
@@ -137,6 +138,9 @@ func (k *Knob) formatValue() string {
 		}
 		return itoa(k.value)
 	case KnobPan:
+		// The JV-1080 pan scale is L64..L1, C, R1..R63 (wire 0..127,
+		// 64 = C). The knob value is the signed UI unit: 0 = C,
+		// -1 = L1 .. -64 = L64, +1 = R1 .. +63 = R63.
 		switch {
 		case k.value == 0:
 			return "C"

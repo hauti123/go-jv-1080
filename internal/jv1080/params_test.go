@@ -16,7 +16,7 @@ func TestResolveParamKeys(t *testing.T) {
 		maxVal int
 	}{
 		{"patch/temp/common/level", message.Address{0x03, 0x00, 0x00, 0x2E}, KindRaw, 0, 127},
-		{"patch/temp/common/pan", message.Address{0x03, 0x00, 0x00, 0x2F}, KindPan, -63, 63},
+		{"patch/temp/common/pan", message.Address{0x03, 0x00, 0x00, 0x2F}, KindPan, -64, 63},
 		{"patch/temp/common/octave", message.Address{0x03, 0x00, 0x00, 0x41}, KindBipolar, -3, 3},
 		{"patch/temp/tone/1/level", message.Address{0x03, 0x00, 0x10, 0x65}, KindRaw, 0, 127},
 		{"patch/temp/tone/4/cutoff", message.Address{0x03, 0x00, 0x16, 0x51}, KindRaw, 0, 127},
@@ -76,8 +76,8 @@ func TestEncodeDecodePan(t *testing.T) {
 		ui   any
 		wire byte
 	}{
-		{"C", 64}, {"center", 64}, {"L63", 1}, {"L1", 63}, {"R1", 65}, {"R63", 127},
-		{0, 64}, {-1, 63}, {-63, 1}, {1, 65}, {63, 127},
+		{"C", 64}, {"center", 64}, {"L64", 0}, {"L63", 1}, {"L1", 63}, {"R1", 65}, {"R63", 127},
+		{0, 64}, {-1, 63}, {-64, 0}, {1, 65}, {63, 127},
 	}
 	for _, c := range cases {
 		data, err := p.EncodeValue(c.ui)
@@ -101,14 +101,17 @@ func TestEncodeDecodePan(t *testing.T) {
 	if data[0] != 63 {
 		t.Errorf("pan -1: wire = %d, want 63 (L1)", data[0])
 	}
-	if _, err := p.EncodeValue("L64"); err == nil {
-		t.Error("EncodeValue(L64) succeeded, want error")
+	if _, err := p.EncodeValue("R64"); err == nil {
+		t.Error("EncodeValue(R64) succeeded, want error")
 	}
 	if _, err := p.EncodeValue("X9"); err == nil {
 		t.Error("EncodeValue(X9) succeeded, want error")
 	}
 	if _, err := p.EncodeValue(64); err == nil {
 		t.Error("EncodeValue(64) succeeded, want range error (> +63)")
+	}
+	if _, err := p.EncodeValue(-65); err == nil {
+		t.Error("EncodeValue(-65) succeeded, want range error (< L64)")
 	}
 }
 

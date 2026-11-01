@@ -114,7 +114,7 @@ func newUI() *ui {
 		status:  "patch/temp",
 	}
 	u.level = gui.NewKnob(gui.KnobMinMax, "LEVEL", keyLevel, 0, 127)
-	u.pan = gui.NewKnob(gui.KnobPan, "PAN", keyPan, -63, 63)
+	u.pan = gui.NewKnob(gui.KnobPan, "PAN", keyPan, -64, 63)
 	u.octave = gui.NewKnob(gui.KnobBipolar, "OCTAVE", keyOctave, -3, 3)
 	u.level.OnChange = func(v int) { u.send(keyLevel, v) }
 	u.pan.OnChange = func(v int) { u.send(keyPan, v) }
@@ -173,7 +173,7 @@ func (u *ui) applyParam(key string, value any) {
 }
 
 // panUIToKnob converts a pan UI value from the device layer ("C", "L13",
-// "R13" or signed -63..+63) into the knob's -63..+63 range.
+// "R13" or signed -64..+63) into the knob's -64..+63 range.
 func panUIToKnob(value any) int {
 	switch v := value.(type) {
 	case int:
