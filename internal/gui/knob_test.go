@@ -6,31 +6,31 @@ import (
 )
 
 func TestScaleAngles(t *testing.T) {
-	// 7 o'clock = 210 degrees, 5 o'clock = -30 degrees (330), sweep 300 deg
-	if got := angleAt(0); math.Abs(got-210) > 1e-9 {
-		t.Errorf("angleAt(0) = %v, want 210 (7 o'clock)", got)
+	// 7 o'clock = -135 deg, 5 o'clock = +135 deg, 12 o'clock = 0 deg
+	if got := angleOf(0, 127, 0); math.Abs(got-MinAngle) > 1e-9 {
+		t.Errorf("angleOf(min) = %v, want %v (7 o'clock)", got, MinAngle)
 	}
-	if got := angleAt(1); math.Abs(got-510) > 1e-9 {
-		t.Errorf("angleAt(1) = %v, want 510 (= -30, 5 o'clock)", got)
+	if got := angleOf(0, 127, 127); math.Abs(got-MaxAngle) > 1e-9 {
+		t.Errorf("angleOf(max) = %v, want %v (5 o'clock)", got, MaxAngle)
 	}
-	// 12 o'clock is at the middle of the sweep for bipolar knobs
-	if got := angleAt(0.5); math.Abs(got-360) > 1e-9 {
-		t.Errorf("angleAt(0.5) = %v, want 360 (= 0 deg, 12 o'clock)", got)
+	if got := angleOf(0, 126, 63); math.Abs(got) > 1e-9 {
+		t.Errorf("angleOf(mid) = %v, want 0 (12 o'clock)", got)
 	}
 }
 
-func TestKnobFraction(t *testing.T) {
+func TestKnobAngle(t *testing.T) {
 	k := NewKnob(KnobMinMax, "LEVEL", 0, 127)
-	if k.fraction() != 0 {
-		t.Errorf("fraction at min = %v, want 0", k.fraction())
+	if k.angle() != MinAngle {
+		t.Errorf("angle at min = %v, want %v", k.angle(), MinAngle)
 	}
 	k.Set(127)
-	if k.fraction() != 1 {
-		t.Errorf("fraction at max = %v, want 1", k.fraction())
+	if k.angle() != MaxAngle {
+		t.Errorf("angle at max = %v, want %v", k.angle(), MaxAngle)
 	}
 	k.Set(64)
-	if f := k.fraction(); math.Abs(f-64.0/127.0) > 1e-9 {
-		t.Errorf("fraction at 64 = %v, want %v", f, 64.0/127.0)
+	want := MinAngle + (MaxAngle-MinAngle)*64.0/127.0
+	if math.Abs(k.angle()-want) > 1e-9 {
+		t.Errorf("angle at 64 = %v, want %v", k.angle(), want)
 	}
 }
 
@@ -72,8 +72,17 @@ func TestKnobFormatBipolar(t *testing.T) {
 		t.Errorf("center() = %d, want 0", k.center())
 	}
 	k.Set(0)
-	if f := k.fraction(); math.Abs(f-0.5) > 1e-9 {
-		t.Errorf("bipolar fraction at 0 = %v, want 0.5 (12 o'clock)", f)
+	if math.Abs(k.angle()) > 1e-9 {
+		t.Errorf("bipolar angle at 0 = %v, want 0 (12 o'clock)", k.angle())
+	}
+	// positive to the right, negative to the left
+	k.Set(3)
+	if k.angle() != MaxAngle {
+		t.Errorf("bipolar angle at +3 = %v, want %v", k.angle(), MaxAngle)
+	}
+	k.Set(-3)
+	if k.angle() != MinAngle {
+		t.Errorf("bipolar angle at -3 = %v, want %v", k.angle(), MinAngle)
 	}
 }
 
@@ -86,48 +95,43 @@ func TestKnobFormatPan(t *testing.T) {
 			t.Errorf("pan formatValue(%d) = %q, want %q", v, got, want)
 		}
 	}
-	// C must map to 12 o'clock
+	// C must map to 12 o'clock area (64 of 0..127)
 	k.Set(64)
-	if f := k.fraction(); math.Abs(f-64.0/127.0) > 1e-9 {
-		t.Errorf("pan fraction at C = %v, want %v", f, 64.0/127.0)
+	if math.Abs(k.angle()-angleOf(0, 127, 64)) > 1e-9 {
+		t.Errorf("pan angle at C = %v, want %v", k.angle(), angleOf(0, 127, 64))
 	}
 }
 
-func TestKnobApplyDeltaReportsChange(t *testing.T) {
+func TestKnobSetReportsChange(t *testing.T) {
 	k := NewKnob(KnobMinMax, "LEVEL", 0, 127)
 	var got []int
 	k.OnChange = func(v int) { got = append(got, v) }
-	k.applyDelta(5)
-	k.applyDelta(0) // no change, no callback
-	k.applyDelta(1000)
+	k.set(5)
+	k.set(5) // no change, no callback
+	k.set(1000)
 	if len(got) != 2 || got[0] != 5 || got[1] != 127 {
 		t.Errorf("OnChange calls = %v, want [5 127]", got)
 	}
-	if !k.ConsumeChanges() {
-		t.Error("ConsumeChanges = false after change, want true")
-	}
-	if k.ConsumeChanges() {
-		t.Error("ConsumeChanges = true twice, want false")
-	}
-}
-
-func TestLEDTextWidth(t *testing.T) {
-	if got := LEDTextWidth("C", FontScale); got != 5*FontScale {
-		t.Errorf("LEDTextWidth(\"C\") = %v, want %v", got, 5*FontScale)
-	}
-	if got := LEDTextWidth("L63", FontScale); got != (3*6-1)*FontScale {
-		t.Errorf("LEDTextWidth(\"L63\") = %v, want %v", got, (3*6-1)*FontScale)
+	// programmatic Set must not call OnChange
+	k.Set(10)
+	if len(got) != 2 {
+		t.Errorf("Set triggered OnChange: %v", got)
 	}
 }
 
-func TestGlyphLookup(t *testing.T) {
-	if _, ok := glyph5x7Lookup(' '); !ok {
-		t.Error("space glyph missing")
+func TestPixelTextSize(t *testing.T) {
+	if got := PixelTextSize("C", 2); got.X != 5*2 || got.Y != 7*2 {
+		t.Errorf("PixelTextSize(\"C\", 2) = %v, want (10, 14)", got)
 	}
-	if _, ok := glyph5x7Lookup('a'); !ok {
-		t.Error("lowercase should map to uppercase glyph")
+	if got := PixelTextSize("L63", 2); got.X != (3*6-1)*2 || got.Y != 7*2 {
+		t.Errorf("PixelTextSize(\"L63\", 2) = %v, want (%d, 14)", got, (3*6-1)*2)
 	}
-	if _, ok := glyph5x7Lookup('é'); ok {
-		t.Error("unsupported rune should not be found")
+}
+
+func TestPixFontCoverage(t *testing.T) {
+	for _, r := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -+." {
+		if _, ok := pixFont[string(r)]; !ok {
+			t.Errorf("glyph %q missing from pixFont", r)
+		}
 	}
 }

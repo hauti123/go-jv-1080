@@ -34,7 +34,6 @@ import (
 	"sync"
 
 	"gioui.org/app"
-	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -228,30 +227,36 @@ func (u *ui) layout(gtx layout.Context, w *app.Window) layout.Dimensions {
 		}
 	}
 drained:
-	if dirty || u.level.ConsumeChanges() || u.pan.ConsumeChanges() || u.octave.ConsumeChanges() {
+	if dirty {
 		w.Invalidate()
 	}
 
 	paint.Fill(gtx.Ops, u.th.Background)
-	return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Spacing: layout.SpaceAround}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.level.Layout(gtx, &u.th) }),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.pan.Layout(gtx, &u.th) }),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.octave.Layout(gtx, &u.th) }),
-			)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			u.mu.Lock()
-			s := u.status
-			u.mu.Unlock()
-			return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				sw := gui.LEDTextWidth(s, gui.FontScale)
-				gui.LEDText(gtx.Ops, f32.Point{X: float32(gtx.Constraints.Max.X-int(sw)) / 2, Y: 0}, s, gui.FontScale, u.th.TextDim)
-				return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X, Y: int(7*gui.FontScale) + gtx.Dp(unit.Dp(8))}}
-			})
-		}),
-	)
+	return layout.UniformInset(unit.Dp(18)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				u.mu.Lock()
+				s := u.status
+				u.mu.Unlock()
+				cell := gtx.Dp(gui.FontCellDp)
+				sz := gui.PixelTextSize(s, cell)
+				x := (gtx.Constraints.Max.X - sz.X) / 2
+				if x < 0 {
+					x = 0
+				}
+				var d layout.Dimensions
+				gui.Offset(gtx, x, 0, func() { d = gui.DrawPixelText(gtx, s, cell) })
+				return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X, Y: d.Size.Y + gtx.Dp(unit.Dp(10))}}
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Spacing: layout.SpaceAround}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.level.Layout(gtx, &u.th) }),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.pan.Layout(gtx, &u.th) }),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return u.octave.Layout(gtx, &u.th) }),
+				)
+			}),
+		)
+	})
 }
 
 func parseBank(s string) (jv1080.Bank, error) {

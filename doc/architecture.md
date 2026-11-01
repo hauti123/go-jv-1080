@@ -17,7 +17,8 @@ code testable and reusable.
 ┌───────────────────────────────┐   ┌────────────────────────────────────┐
 │  internal/gui (widgets)       │   │  internal/gui.JVController         │
 │  • Knob gadget (3 styles)     │   │  • gui.Controller implementation   │
-│  • 5x7 LED font renderer      │   │  • maps gui.Param → SysEx address  │
+│  • MK-II style drawing +     │   │  • maps gui.Param → SysEx address  │
+│    5x7 LED font (gui-proto)  │   │  • decodes unsolicited DT1 into    │
 │  • dark green MK-II theme     │   │  • decodes unsolicited DT1 into    │
 │  • gui.Controller interface   │   │    typed Param updates             │
 │  • gui.Param descriptor       │   │  • attached to midi.Device         │

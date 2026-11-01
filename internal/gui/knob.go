@@ -2,63 +2,61 @@ package gui
 
 import (
 	"image"
+	"image/color"
 	"math"
+	"time"
 
 	"gioui.org/f32"
-	"gioui.org/gesture"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
-	"gioui.org/unit"
 )
 
 // KnobStyle selects how the value of a Knob maps onto the scale.
 type KnobStyle int
 
 const (
-	// KnobMinMax has 0 at the left end (7 o'clock) and the maximum at the
-	// right end (5 o'clock).
+	// KnobMinMax has the minimum at the left end (7 o'clock, -135 deg)
+	// and the maximum at the right end (5 o'clock, +135 deg).
 	KnobMinMax KnobStyle = iota
-	// KnobBipolar has 0 at 12 o'clock, positive values to the right and
-	// negative values to the left.
+	// KnobBipolar has 0 at 12 o'clock (0 deg), positive values to the
+	// right and negative values to the left.
 	KnobBipolar
-	// KnobPan has C at 12 o'clock, Lxx to the left and Rxx to the right.
+	// KnobPan has C at 12 o'clock, Lxx to the left and Rxx to the right
+	// (raw value range 0..127, 64 = C).
 	KnobPan
 )
 
-// scale geometry: the scale spans from 7 o'clock to 5 o'clock, i.e. from
-// 210 degrees to -30 degrees (330 degrees) going clockwise through 12
-// o'clock. In screen coordinates (y down) 0 degrees points right and
-// angles increase clockwise.
-const (
-	scaleStartAngle = 210.0 // 7 o'clock
-	scaleSweep      = 300.0 // degrees, clockwise through 12 o'clock to 5 o'clock
-)
-
-// Knob is a compact rotary gadget: a colored arc scale from 7 to 5
-// o'clock, the value in the center, an optional unit below the value and a
-// mandatory title below the scale. There is no knob in the middle; the
-// scale itself moves. Drag vertically (or use the scroll wheel) to change
-// the value; every change is reported through OnChange.
+// Knob is a compact hardware-style rotary gadget in the MK-II Tone Stack
+// look of cmd/gui-proto: an LED arc plus radial ticks around a metal cap,
+// the value as a dot-matrix LED readout in the center of the cap, an
+// optional unit in the free space between the scale ends and a mandatory
+// title below the scale. The scale spans from 7 o'clock to 5 o'clock and
+// lights up as the value moves; the moving scale plus the LED readout
+// carry the value, so no separate pointer is needed.
+//
+// Interaction (same as gui-proto): drag up/down or left/right to dial,
+// mouse wheel for steps, Shift = fine, double-click resets to Min.
 type Knob struct {
 	Style KnobStyle
 	Title string // mandatory, written below the scale
-	Unit  string // optional, written between the scale ends
+	Unit  string // optional, written in the free space between the scale ends
 
 	Min, Max int // value range (for KnobPan: 0..127 raw pan, 64 = C)
 
 	value int
 
-	drag    gesture.Drag
-	scroll  gesture.Scroll
-	changed bool
+	dragging  bool
+	pointerID pointer.ID
+	start     f32.Point
+	startVal  int
+	lastPress time.Duration
 
 	// OnChange is called with the new value whenever the user changes it
-	// by dragging or scrolling. It is not called for programmatic Set
-	// calls.
+	// by dragging, scrolling or double-click reset. It is not called for
+	// programmatic Set calls.
 	OnChange func(v int)
 }
 
@@ -67,7 +65,7 @@ func NewKnob(style KnobStyle, title string, min, max int) *Knob {
 	if max < min {
 		min, max = max, min
 	}
-	return &Knob{Style: style, Title: title, Min: min, Max: max, value: min}
+	return &Knob{Style: style, Title: title, Min: min, Max: max, value: min, lastPress: -time.Hour}
 }
 
 // Value returns the current value.
@@ -87,6 +85,21 @@ func (k *Knob) SetRange(min, max int) {
 	}
 	k.Min, k.Max = min, max
 	k.Set(k.value)
+}
+
+// angle returns the scale angle of the current value in degrees
+// (0 = 12 o'clock, clockwise positive, -135..+135).
+func (k *Knob) angle() float64 {
+	return angleOf(k.Min, k.Max, k.value)
+}
+
+// angleOf maps a value in [min,max] onto [MinAngle,MaxAngle].
+func angleOf(min, max, v int) float64 {
+	span := max - min
+	if span <= 0 {
+		return MinAngle
+	}
+	return MinAngle + (MaxAngle-MinAngle)*float64(clampInt(v, min, max)-min)/float64(span)
 }
 
 // formatValue renders the value according to the knob style.
@@ -123,173 +136,155 @@ func (k *Knob) center() int {
 	}
 }
 
-// fraction returns the position of the value on the scale in [0,1].
-func (k *Knob) fraction() float64 {
-	span := k.Max - k.Min
-	if span <= 0 {
-		return 0
-	}
-	return float64(k.value-k.Min) / float64(span)
-}
+// knobDp is the nominal knob diameter in dp; kept compact so that many
+// knobs can be stacked next to each other.
+const knobDp = 96
 
-// angleAt returns the scale angle (degrees, screen coordinates) for a
-// fraction in [0,1].
-func angleAt(frac float64) float64 {
-	return scaleStartAngle + frac*scaleSweep
-}
+// titleDp is the height of the title row below the scale in dp.
+const titleDp = 10
 
-// Layout lays out the knob and handles its input. The knob is as compact
-// as the constraints allow.
+// Layout lays out the knob and handles its input.
 func (k *Knob) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
+	size := gtx.Dp(knobDp)
+	if max := gtx.Constraints.Max.X; size > max && max > 0 {
+		size = max
+	}
+	total := size + gtx.Dp(titleDp)
+	gtx.Constraints = layout.Exact(image.Pt(size, total))
+
+	// declare the knob's tag at its clip area, then drain its events
+	cs := clip.Rect{Max: image.Pt(size, total)}.Push(gtx.Ops)
+	event.Op(gtx.Ops, k)
+	cs.Pop()
+	k.processEvents(gtx)
+
+	k.draw(gtx, th, float64(size))
+	return layout.Dimensions{Size: image.Pt(size, total)}
+}
+
+const dblClick = 400 * time.Millisecond
+
+// scrollAll is a wide scroll range so any wheel amount is delivered.
+var scrollAll = pointer.ScrollRange{Min: -(1 << 20), Max: 1 << 20}
+
+// processEvents handles drag / scroll / double-click like gui-proto.
+func (k *Knob) processEvents(gtx layout.Context) {
 	for {
-		ev, ok := k.drag.Update(gtx.Metric, gtx.Source, gesture.Vertical)
+		ev, ok := gtx.Event(pointer.Filter{
+			Target:  k,
+			Kinds:   pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel | pointer.Scroll,
+			ScrollX: scrollAll,
+			ScrollY: scrollAll,
+		})
 		if !ok {
 			break
 		}
-		switch ev.Kind {
-		case pointer.Drag, pointer.Release:
-			k.applyDelta(-int(ev.Position.Y) / dragPixelsPerStep)
+		e, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		switch e.Kind {
+		case pointer.Press:
+			if e.Buttons != pointer.ButtonPrimary {
+				continue
+			}
+			if e.Time-k.lastPress < dblClick {
+				k.set(k.Min) // double-click resets to minimum
+			} else {
+				k.dragging = true
+				k.pointerID = e.PointerID
+				k.start = e.Position
+				k.startVal = k.value
+				gtx.Execute(pointer.GrabCmd{Tag: k, ID: e.PointerID})
+			}
+			k.lastPress = e.Time
+		case pointer.Drag:
+			if !k.dragging || e.PointerID != k.pointerID {
+				continue
+			}
+			span := k.Max - k.Min
+			if span <= 0 {
+				continue
+			}
+			sens := float64(span) / 220 // value units per dragged pixel
+			if e.Modifiers&key.ModShift != 0 {
+				sens /= 4 // fine
+			}
+			dx := e.Position.X - k.start.X
+			dy := e.Position.Y - k.start.Y
+			k.set(k.startVal + int(math.Round(float64(dx-dy)*sens))) // up OR right increases
+		case pointer.Release, pointer.Cancel:
+			k.dragging = false
+		case pointer.Scroll:
+			// one wheel notch is ~120; Scroll.Y is negative scrolling up
+			n := int(math.Round(float64(-e.Scroll.Y) / 120))
+			if n == 0 {
+				if e.Scroll.Y < 0 {
+					n = 1
+				} else if e.Scroll.Y > 0 {
+					n = -1
+				}
+			}
+			k.set(k.value + n)
 		}
 	}
-	sdist := k.scroll.Update(gtx.Metric, gtx.Source, gtx.Now, gesture.Vertical,
-		pointer.ScrollRange{},
-		pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32})
-	if sdist != 0 {
-		k.applyDelta(sdist / scrollPixelsPerStep)
-	}
-
-	size := knobSize(gtx)
-	macro := op.Record(gtx.Ops)
-	k.layout(gtx, th, size)
-	call := macro.Stop()
-
-	area := clip.Rect(image.Rect(0, 0, size.X, size.Y)).Push(gtx.Ops)
-	k.drag.Add(gtx.Ops)
-	k.scroll.Add(gtx.Ops)
-	event.Op(gtx.Ops, k)
-	area.Pop()
-
-	call.Add(gtx.Ops)
-	return layout.Dimensions{Size: size}
 }
 
-const (
-	dragPixelsPerStep   = 4
-	scrollPixelsPerStep = 12
-)
-
-// applyDelta changes the value by steps and reports the change.
-func (k *Knob) applyDelta(steps int) {
-	if steps == 0 {
-		return
-	}
-	nv := clampInt(k.value+steps, k.Min, k.Max)
+// set clamps and applies a new value and reports it through OnChange.
+func (k *Knob) set(v int) {
+	nv := clampInt(v, k.Min, k.Max)
 	if nv == k.value {
 		return
 	}
 	k.value = nv
-	k.changed = true
 	if k.OnChange != nil {
 		k.OnChange(nv)
 	}
 }
 
-// ConsumeChanges reports whether the user changed the value since the last
-// call, and resets the flag.
-func (k *Knob) ConsumeChanges() bool {
-	c := k.changed
-	k.changed = false
-	return c
-}
+// draw renders the knob in the MK-II Tone Stack style of cmd/gui-proto with
+// a green LED arc, radial ticks, metal cap and LED readout in the center.
+func (k *Knob) draw(gtx layout.Context, th *Theme, size float64) {
+	cx, cy := size/2, size/2
+	angle := k.angle()
 
-// knobSize computes the compact knob size: square scale area plus the title
-// row below.
-func knobSize(gtx layout.Context) image.Point {
-	d := gtx.Constraints
-	s := d.Max.X
-	if d.Max.Y < s {
-		s = d.Max.Y - titleHeight(gtx)
-	}
-	min := gtx.Dp(unit.Dp(48))
-	if s < min {
-		s = min
-	}
-	// keep room for the title below the scale
-	return image.Point{X: s, Y: s + titleHeight(gtx)}
-}
+	// LED arc: unlit base, lit up to the value (gui-proto drawAmp, green)
+	strokeArc(gtx, cx, cy, size*0.329, MinAngle, MaxAngle, 5, th.ArcBase)
+	strokeArc(gtx, cx, cy, size*0.329, MinAngle, angle, 5, th.Lit)
+	// radial ticks around the arc
+	drawTicks(gtx, cx, cy, size*0.371, size*0.421, 40, 4, th.TickBase, th.Lit, MinAngle, MaxAngle, angle)
 
-func titleHeight(gtx layout.Context) int {
-	return int(float32(glyph5x7Height+1)*FontScale) + gtx.Dp(unit.Dp(2))
-}
+	// metal cap
+	fillCircleGradient(gtx, cx, cy, size*0.271, th.CapTop, th.CapBot)
+	strokeCircle(gtx, cx, cy, size*0.271, 1, th.CapEdge)
+	fillCircleGradient(gtx, cx, cy, size*0.207, rgb(0x5D5C60), rgb(0x0C0B0E))
+	strokeCircle(gtx, cx, cy, size*0.207, 1.5, rgb(0x000000))
 
-// layout draws the knob into a size.X x size.Y box (the title occupies the
-// bottom titleHeight pixels).
-func (k *Knob) layout(gtx layout.Context, th *Theme, size image.Point) {
-	scaleH := size.Y - titleHeight(gtx)
-	cx := float32(size.X) / 2
-	cy := float32(scaleH) / 2
-	radius := float32(minInt(size.X, scaleH)) / 2
-	thickness := float32(gtx.Dp(unit.Dp(3)))
-	if thickness < 2 {
-		thickness = 2
-	}
-
-	// background surface
-	paint.FillShape(gtx.Ops, th.Surface, clip.Rect(image.Rect(0, 0, size.X, size.Y)).Op())
-
-	// scale ticks: unlit base arc, then the lit portion up to the value
-	const ticks = 24
-	for i := 0; i <= ticks; i++ {
-		frac := float64(i) / float64(ticks)
-		ang := angleAt(frac) * math.Pi / 180
-		// tick from inner to outer radius, perpendicular (radial) segment
-		dx := float32(math.Cos(ang))
-		dy := float32(math.Sin(ang))
-		inner := radius - thickness
-		p0 := f32.Point{X: cx + dx*inner, Y: cy + dy*inner}
-		p1 := f32.Point{X: cx + dx*radius, Y: cy + dy*radius}
-		col := th.LEDOff
-		if frac <= k.fraction()+1e-9 {
-			col = th.LEDOn
-		}
-		paint.FillShape(gtx.Ops, col, tickShape(gtx.Ops, p0, p1, thickness*0.6))
-	}
-
-	// value in the center of the knob
+	// value as dot-matrix LED readout in the center of the cap
 	val := k.formatValue()
-	vw := LEDTextWidth(val, FontScale)
-	LEDText(gtx.Ops, f32.Point{X: cx - vw/2, Y: cy - (glyph5x7Height*FontScale)/2}, val, FontScale, th.Text)
+	cell := gtx.Dp(FontCellDp)
+	vsz := PixelTextSize(val, cell)
+	offset(gtx, int(cx)-vsz.X/2, int(cy)-vsz.Y/2, func() {
+		DrawPixelText(gtx, val, cell)
+	})
 
-	// optional unit in the free space between the scale ends (below center)
+	// optional unit in the free space between the scale ends (bottom gap)
 	if k.Unit != "" {
-		uw := LEDTextWidth(k.Unit, FontScale)
-		unitY := cy + radius*float32(math.Sin(math.Pi/2))*0.35
-		LEDText(gtx.Ops, f32.Point{X: cx - uw/2, Y: unitY}, k.Unit, FontScale, th.TextDim)
+		us := PixelTextSize(k.Unit, cell)
+		offset(gtx, int(cx)-us.X/2, int(cy+size*0.30), func() {
+			DrawPixelText(gtx, k.Unit, cell)
+		})
 	}
 
 	// mandatory title below the scale
-	tw := LEDTextWidth(k.Title, FontScale)
-	LEDText(gtx.Ops, f32.Point{X: cx - tw/2, Y: float32(scaleH) + 1}, k.Title, FontScale, th.TextDim)
+	ts := PixelTextSize(k.Title, cell)
+	offset(gtx, int(cx)-ts.X/2, int(size)+1, func() {
+		DrawPixelText(gtx, k.Title, cell)
+	})
 }
 
-// tickShape builds a small quad (thick line) path for a scale tick.
-func tickShape(ops *op.Ops, p0, p1 f32.Point, width float32) clip.Op {
-	dx := p1.X - p0.X
-	dy := p1.Y - p0.Y
-	l := float32(math.Hypot(float64(dx), float64(dy)))
-	if l == 0 {
-		return clip.Rect(image.Rectangle{}).Op()
-	}
-	nx := -dy / l * width / 2
-	ny := dx / l * width / 2
-	var p clip.Path
-	p.Begin(ops)
-	p.MoveTo(f32.Point{X: p0.X + nx, Y: p0.Y + ny})
-	p.LineTo(f32.Point{X: p1.X + nx, Y: p1.Y + ny})
-	p.LineTo(f32.Point{X: p1.X - nx, Y: p1.Y - ny})
-	p.LineTo(f32.Point{X: p0.X - nx, Y: p0.Y - ny})
-	p.Close()
-	return clip.Outline{Path: p.End()}.Op()
+func strokeCircle(gtx layout.Context, cx, cy, r float64, width float32, col color.NRGBA) {
+	strokeArc(gtx, cx, cy, r, 0, 360, width, col)
 }
 
 func clampInt(v, min, max int) int {
@@ -300,13 +295,6 @@ func clampInt(v, min, max int) int {
 		return max
 	}
 	return v
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func itoa(v int) string {

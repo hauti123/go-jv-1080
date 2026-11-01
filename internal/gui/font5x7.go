@@ -1,136 +1,105 @@
 package gui
 
 import (
-	"gioui.org/f32"
-	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"image"
-	"image/color"
+	"strings"
+
+	"gioui.org/layout"
+	"gioui.org/unit"
 )
 
-// glyph5x7 is the classic 5x7 LED/LCD bitmap font: each glyph is 5 columns
-// of 7 bits, the least significant bit is the top row. The table covers
-// ASCII 0x20 (space) to 0x5F ('_'); unsupported runes are rendered as a
-// filled box.
-var glyph5x7 = [96][5]byte{
-	0x20: {0x00, 0x00, 0x00, 0x00, 0x00}, // space
-	0x21: {0x00, 0x00, 0x5F, 0x00, 0x00}, // !
-	0x22: {0x00, 0x07, 0x00, 0x07, 0x00}, // "
-	0x23: {0x14, 0x7F, 0x14, 0x7F, 0x14}, // #
-	0x24: {0x24, 0x2A, 0x7F, 0x2A, 0x12}, // $
-	0x25: {0x23, 0x13, 0x08, 0x64, 0x62}, // %
-	0x26: {0x36, 0x49, 0x55, 0x22, 0x50}, // &
-	0x27: {0x00, 0x05, 0x03, 0x00, 0x00}, // '
-	0x28: {0x00, 0x1C, 0x22, 0x41, 0x00}, // (
-	0x29: {0x00, 0x41, 0x22, 0x1C, 0x00}, // )
-	0x2A: {0x14, 0x08, 0x3E, 0x08, 0x14}, // *
-	0x2B: {0x08, 0x08, 0x3E, 0x08, 0x08}, // +
-	0x2C: {0x00, 0x50, 0x30, 0x00, 0x00}, // ,
-	0x2D: {0x08, 0x08, 0x08, 0x08, 0x08}, // -
-	0x2E: {0x00, 0x60, 0x60, 0x00, 0x00}, // .
-	0x2F: {0x20, 0x10, 0x08, 0x04, 0x02}, // /
-	0x30: {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
-	0x31: {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
-	0x32: {0x42, 0x61, 0x51, 0x49, 0x46}, // 2
-	0x33: {0x21, 0x41, 0x45, 0x4B, 0x31}, // 3
-	0x34: {0x18, 0x14, 0x12, 0x7F, 0x10}, // 4
-	0x35: {0x27, 0x45, 0x45, 0x45, 0x39}, // 5
-	0x36: {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 6
-	0x37: {0x01, 0x71, 0x09, 0x05, 0x03}, // 7
-	0x38: {0x36, 0x49, 0x49, 0x49, 0x36}, // 8
-	0x39: {0x06, 0x49, 0x49, 0x29, 0x1E}, // 9
-	0x3A: {0x00, 0x36, 0x36, 0x00, 0x00}, // :
-	0x3B: {0x00, 0x56, 0x36, 0x00, 0x00}, // ;
-	0x3C: {0x08, 0x14, 0x22, 0x41, 0x00}, // <
-	0x3D: {0x14, 0x14, 0x14, 0x14, 0x14}, // =
-	0x3E: {0x00, 0x41, 0x22, 0x14, 0x08}, // >
-	0x3F: {0x02, 0x01, 0x51, 0x09, 0x06}, // ?
-	0x40: {0x32, 0x49, 0x79, 0x41, 0x3E}, // @
-	0x41: {0x7E, 0x11, 0x11, 0x11, 0x7E}, // A
-	0x42: {0x7F, 0x49, 0x49, 0x49, 0x36}, // B
-	0x43: {0x3E, 0x41, 0x41, 0x41, 0x22}, // C
-	0x44: {0x7F, 0x41, 0x41, 0x22, 0x1C}, // D
-	0x45: {0x7F, 0x49, 0x49, 0x49, 0x41}, // E
-	0x46: {0x7F, 0x09, 0x09, 0x09, 0x01}, // F
-	0x47: {0x3E, 0x41, 0x49, 0x49, 0x7A}, // G
-	0x48: {0x7F, 0x08, 0x08, 0x08, 0x7F}, // H
-	0x49: {0x00, 0x41, 0x7F, 0x41, 0x00}, // I
-	0x4A: {0x20, 0x40, 0x41, 0x3F, 0x01}, // J
-	0x4B: {0x7F, 0x08, 0x14, 0x22, 0x41}, // K
-	0x4C: {0x7F, 0x40, 0x40, 0x40, 0x40}, // L
-	0x4D: {0x7F, 0x02, 0x0C, 0x02, 0x7F}, // M
-	0x4E: {0x7F, 0x04, 0x08, 0x10, 0x7F}, // N
-	0x4F: {0x3E, 0x41, 0x41, 0x41, 0x3E}, // O
-	0x50: {0x7F, 0x09, 0x09, 0x09, 0x06}, // P
-	0x51: {0x3E, 0x41, 0x51, 0x21, 0x5E}, // Q
-	0x52: {0x7F, 0x09, 0x19, 0x29, 0x46}, // R
-	0x53: {0x46, 0x49, 0x49, 0x49, 0x31}, // S
-	0x54: {0x01, 0x01, 0x7F, 0x01, 0x01}, // T
-	0x55: {0x3F, 0x40, 0x40, 0x40, 0x3F}, // U
-	0x56: {0x1F, 0x20, 0x40, 0x20, 0x1F}, // V
-	0x57: {0x3F, 0x40, 0x38, 0x40, 0x3F}, // W
-	0x58: {0x63, 0x14, 0x08, 0x14, 0x63}, // X
-	0x59: {0x07, 0x08, 0x70, 0x08, 0x07}, // Y
-	0x5A: {0x61, 0x51, 0x49, 0x45, 0x43}, // Z
-	0x5B: {0x00, 0x7F, 0x41, 0x41, 0x00}, // [
-	0x5C: {0x02, 0x04, 0x08, 0x10, 0x20}, // backslash
-	0x5D: {0x00, 0x41, 0x41, 0x7F, 0x00}, // ]
-	0x5E: {0x04, 0x02, 0x01, 0x02, 0x04}, // ^
-	0x5F: {0x40, 0x40, 0x40, 0x40, 0x40}, // _
+// pixFont is the 5x7 dot-matrix font from the gui-proto DC-90 sample: each
+// glyph is 7 rows of 5 bits ('1' = lit pixel).
+var pixFont = map[string][7]string{
+	"A": {"01110", "10001", "10001", "11111", "10001", "10001", "10001"},
+	"B": {"11110", "10001", "10001", "11110", "10001", "10001", "11110"},
+	"C": {"01110", "10001", "10000", "10000", "10000", "10001", "01110"},
+	"D": {"11110", "10001", "10001", "10001", "10001", "10001", "11110"},
+	"E": {"11111", "10000", "10000", "11110", "10000", "10000", "11111"},
+	"F": {"11111", "10000", "10000", "11110", "10000", "10000", "10000"},
+	"G": {"01110", "10001", "10000", "10111", "10001", "10001", "01111"},
+	"H": {"10001", "10001", "10001", "11111", "10001", "10001", "10001"},
+	"I": {"01110", "00100", "00100", "00100", "00100", "00100", "01110"},
+	"J": {"00111", "00010", "00010", "00010", "10010", "10010", "01100"},
+	"K": {"10001", "10010", "10100", "11000", "10100", "10010", "10001"},
+	"L": {"10000", "10000", "10000", "10000", "10000", "10000", "11111"},
+	"M": {"10001", "11011", "10101", "10101", "10001", "10001", "10001"},
+	"N": {"10001", "10001", "11001", "10101", "10011", "10001", "10001"},
+	"O": {"01110", "10001", "10001", "10001", "10001", "10001", "01110"},
+	"P": {"11110", "10001", "10001", "11110", "10000", "10000", "10000"},
+	"Q": {"01110", "10001", "10001", "10101", "10010", "10110", "01101"},
+	"R": {"11110", "10001", "10001", "11110", "10100", "10010", "10001"},
+	"S": {"01111", "10000", "10000", "01110", "00001", "00001", "11110"},
+	"T": {"11111", "00100", "00100", "00100", "00100", "00100", "00100"},
+	"U": {"10001", "10001", "10001", "10001", "10001", "10001", "01110"},
+	"V": {"10001", "10001", "10001", "10001", "10001", "01010", "00100"},
+	"W": {"10001", "10001", "10001", "10101", "10101", "10101", "01010"},
+	"X": {"10001", "10001", "01010", "00100", "01010", "10001", "10001"},
+	"Y": {"10001", "10001", "01010", "00100", "00100", "00100", "00100"},
+	"Z": {"11111", "00001", "00010", "00100", "01000", "10000", "11111"},
+	"0": {"01110", "10001", "10011", "10101", "11001", "10001", "01110"},
+	"1": {"00100", "01100", "00100", "00100", "00100", "00100", "01110"},
+	"2": {"01110", "10001", "00001", "00010", "00100", "01000", "11111"},
+	"3": {"11111", "00010", "00100", "00010", "00001", "10001", "01110"},
+	"4": {"00010", "00110", "01010", "10010", "11111", "00010", "00010"},
+	"5": {"11111", "10000", "11110", "00001", "00001", "10001", "01110"},
+	"6": {"00110", "01000", "10000", "11110", "10001", "10001", "01110"},
+	"7": {"11111", "00001", "00010", "00100", "01000", "01000", "01000"},
+	"8": {"01110", "10001", "10001", "01110", "10001", "10001", "01110"},
+	"9": {"01110", "10001", "10001", "01111", "00001", "00010", "01100"},
+	" ": {"00000", "00000", "00000", "00000", "00000", "00000", "00000"},
+	"-": {"00000", "00000", "00000", "01110", "00000", "00000", "00000"},
+	"+": {"00000", "00100", "00100", "01110", "00100", "00100", "00000"},
+	".": {"00000", "00000", "00000", "00000", "00000", "00110", "00110"},
 }
 
-// glyph5x7Width and glyph5x7Height are the cell dimensions of the 5x7 font.
+// LED colors of the DC-90 sample.
 const (
-	glyph5x7Width  = 5
-	glyph5x7Height = 7
+	ledLit = 0x39FF70 // bright green
+	ledDim = 0x0B3315 // unlit dot grid
 )
 
-// LEDText draws s with the 5x7 LED bitmap font scaled by scale (1 = native
-// 5x7 pixels per glyph cell), with the top-left corner at origin, in the
-// given color. The color is set with a ColorOp before painting, so the
-// caller controls the LED color.
-func LEDText(ops *op.Ops, origin f32.Point, s string, scale float32, col color.NRGBA) {
-	if scale <= 0 {
-		return
-	}
-	x := origin.X
-	for _, r := range s {
-		glyph, ok := glyph5x7Lookup(r)
+// PixelTextSize returns the pixel size of s rendered with the dot-matrix
+// font at the given cell size in pixels.
+func PixelTextSize(s string, cellPx int) image.Point {
+	n := len([]rune(s))
+	return image.Pt((n*6-1)*cellPx, 7*cellPx)
+}
+
+// DrawPixelText draws s as a green-on-black dot matrix at the current
+// origin, cellPx pixels per dot, like the gui-proto drawPixelText.
+func DrawPixelText(gtx layout.Context, s string, cellPx int) layout.Dimensions {
+	s = strings.ToUpper(s)
+	for i, r := range []rune(s) {
+		glyph, ok := pixFont[string(r)]
 		if !ok {
-			glyph = glyph5x7[0x3F-0x20] // '?'
+			glyph = pixFont[" "]
 		}
-		for cx := 0; cx < glyph5x7Width; cx++ {
-			column := glyph[cx]
-			for cy := 0; cy < glyph5x7Height; cy++ {
-				if column&(1<<cy) == 0 {
-					continue
+		for row := 0; row < 7; row++ {
+			for col := 0; col < 5; col++ {
+				colr := rgb(ledDim)
+				colr.A = 140
+				if glyph[row][col] == '1' {
+					colr = rgb(ledLit)
 				}
-				px := x + float32(cx)*scale
-				py := origin.Y + float32(cy)*scale
-				r := clip.Rect(image.Rect(
-					int(px), int(py),
-					int(px+scale+0.999), int(py+scale+0.999),
-				)).Op()
-				paint.FillShape(ops, col, r)
+				x := (i*6 + col) * cellPx
+				y := row * cellPx
+				fillRect(gtx, float32(x), float32(y), float32(cellPx), float32(cellPx), colr)
 			}
 		}
-		x += float32(glyph5x7Width+1) * scale
 	}
+	return layout.Dimensions{Size: PixelTextSize(s, cellPx)}
 }
 
-// LEDTextWidth returns the width in pixels of s rendered with the 5x7 font
-// at the given scale.
-func LEDTextWidth(s string, scale float32) float32 {
-	return float32(len(s)*(glyph5x7Width+1)-1) * scale
-}
-
-func glyph5x7Lookup(r rune) ([5]byte, bool) {
-	if r >= 0x20 && r <= 0x5F {
-		return glyph5x7[r-0x20], true
-	}
-	if r >= 'a' && r <= 'z' {
-		return glyph5x7[r-'a'+'A'-0x20], true
-	}
-	return [5]byte{}, false
+// ledFrame draws a black bezel + dot-matrix display, like a 90s rack unit
+// (the gui-proto ledFrame).
+func ledFrame(gtx layout.Context, s string, cell unit.Dp) layout.Dimensions {
+	cellPx := gtx.Dp(cell)
+	pad := gtx.Dp(4)
+	sz := PixelTextSize(strings.ToUpper(s), cellPx)
+	total := image.Pt(sz.X+2*pad, sz.Y+2*pad)
+	fillRect(gtx, 0, 0, float32(total.X), float32(total.Y), rgb(0x6F6D66))
+	fillRect(gtx, 2, 2, float32(total.X-4), float32(total.Y-4), rgb(0x050705))
+	offset(gtx, pad, pad, func() { DrawPixelText(gtx, s, cellPx) })
+	return layout.Dimensions{Size: total}
 }
