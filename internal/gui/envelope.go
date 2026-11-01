@@ -170,7 +170,11 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	total := h + gtx.Dp(10) // title row below the screen
 	gtx.Constraints = layout.Exact(image.Pt(w, total))
 
-	log.Printf("ENV layout: w=%d h=%d total=%d", w, h, total)
+	// Everything below (drawing and pointer events) is in physical pixels.
+	// pxPerDp > 1 on HiDPI means 1 logical dp is several physical px; pointer
+	// deltas arrive in logical units (dp) after the router's inverse scale,
+	// so convert drag deltas dp->px with PxPerDp to match the pixel geometry.
+	log.Printf("ENV layout: w=%d h=%d total=%d pxPerDp=%.2f", w, h, total, gtx.Metric.PxPerDp)
 	padX := float32(gtx.Dp(8))
 	padT := float32(gtx.Dp(8))
 	padB := float32(gtx.Dp(14))
@@ -260,6 +264,9 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 				continue
 			}
 			dx, dy := pe.Position.X-e.lastDrag.X, pe.Position.Y-e.lastDrag.Y
+			// event positions are logical (dp); geometry is physical px
+			dx *= gtx.Metric.PxPerDp
+			dy *= gtx.Metric.PxPerDp
 			// A one-time coordinate-frame switch (e.g. when the pointer grab
 			// takes effect) shows up as an implausibly large delta; skip it
 			// and re-anchor instead of applying it.

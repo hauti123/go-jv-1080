@@ -226,3 +226,22 @@ func TestDragSmallDeltasNotLost(t *testing.T) {
 		t.Errorf("100x1px up drag: l=%d, want %d", e.levels[i], wantL)
 	}
 }
+
+// TestDragDeltaScaledByPxPerDp pins that a drag delta in logical units (dp)
+// is scaled by PxPerDp to physical pixels before mapping, so on HiDPI the
+// point tracks the mouse 1:1 in screen pixels.
+func TestDragDeltaScaledByPxPerDp(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{10, 10, 10, 10}, [4]int{0, 0, 0, 0})
+	iw, ih := float32(818), float32(224) // physical px inner size
+	ppdp := float32(1.75)                // HiDPI scale
+	i := 1
+	e.beginDrag(i, 1, f32.Pt(0, 0))
+	// one event of +10 logical dp = +17.5 physical px
+	dx := float32(10) * ppdp
+	e.dragBy(i, dx, 0, iw, ih)
+	want := 10 + int(roundF(17.5/iw*508))
+	if e.times[i] != want {
+		t.Errorf("t after +10dp at scale %.2f: %d, want %d", ppdp, e.times[i], want)
+	}
+}
