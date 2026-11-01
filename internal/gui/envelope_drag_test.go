@@ -57,14 +57,19 @@ func TestSetTimeBounds(t *testing.T) {
 // TestDragInDeviceUnits pins dragTo: the pixel delta is converted to device
 // units (envMaxTime over iw px, 126 over ih px), applied to the pressed
 // point only, with segment bounds enforced.
+func envPx(p f32.Point, padX, padT, iw, ih float32) f32.Point {
+	return f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
+}
+
 func TestDragInDeviceUnits(t *testing.T) {
 	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
 	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
 	iw, ih := float32(508), float32(126) // 1px == 1 device unit
 	i := 1
-	e.beginDrag(i, 1, f32.Pt(100, 50))
-	// drag right 30px, up 10px
-	e.dragTo(i, f32.Pt(130, 40), iw, ih)
+	hp := envPx(e.points[i], 0, 0, iw, ih) // handle pixel at press
+	e.beginDrag(i, 1, hp, hp)              // press exactly on the handle
+	// drag right 30px, up 10px (positions relative to the handle)
+	e.dragTo(i, f32.Pt(hp.X+30, hp.Y-10), hp, iw, ih)
 	if e.times[1] != 70 {
 		t.Errorf("t2 after +30px = %d, want 70", e.times[1])
 	}
@@ -92,16 +97,16 @@ func TestPerHandleDrag(t *testing.T) {
 		e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
 		p := e.points[i]
 		press := f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
-		e.beginDrag(i, 1, press)
-		e.dragTo(i, f32.Pt(press.X, press.Y-30), iw, ih) // 30px up
+		e.beginDrag(i, 1, press, envPx(e.points[i], padX, padT, iw, ih))
+		e.dragTo(i, f32.Pt(press.X, press.Y-30), envPx(e.points[i], padX, padT, iw, ih), iw, ih) // 30px up
 		if e.levels[i] <= [4]int{0, 20, -20, 0}[i] {
 			t.Errorf("handle %d: y-drag did not raise level (%d)", i, e.levels[i])
 		}
 		e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
 		p = e.points[i]
 		press = f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
-		e.beginDrag(i, 1, press)
-		e.dragTo(i, f32.Pt(press.X+30, press.Y), iw, ih) // 30px right
+		e.beginDrag(i, 1, press, envPx(e.points[i], padX, padT, iw, ih))
+		e.dragTo(i, f32.Pt(press.X+30, press.Y), envPx(e.points[i], padX, padT, iw, ih), iw, ih) // 30px right
 		if e.times[i] <= 40 {
 			t.Errorf("handle %d: x-drag did not grow segment (t=%d)", i, e.times[i])
 		}
@@ -121,7 +126,7 @@ func TestHitTestSelectsPressedHandle(t *testing.T) {
 	padX, padT := float32(8), float32(8)
 	px := func(p f32.Point) f32.Point { return f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih) }
 	for i := 0; i < 4; i++ {
-		press := px(e.points[i])
+		press := envPx(e.points[i], padX, padT, iw, ih)
 		best, bestD := 0, float32(1<<30)
 		for j := range e.points {
 			p := px(e.points[j])
@@ -133,5 +138,34 @@ func TestHitTestSelectsPressedHandle(t *testing.T) {
 		if best != i {
 			t.Errorf("press at handle %d selected %d", i, best)
 		}
+	}
+}
+
+// TestDragFrameIndependent pins that dragTo produces the same device-unit
+// delta regardless of the absolute coordinate frame the drag event
+// arrives in (local vs. window-global after a grab): the delta is computed
+// relative to the handle's pixel position.
+func TestDragFrameIndependent(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+	iw, ih := float32(508), float32(126) // 1px == 1 unit
+	i := 1
+	hp := envPx(e.points[i], 0, 0, iw, ih)
+	e.beginDrag(i, 1, hp, hp)
+
+	// same physical drag (+30px right, -10px up) delivered in two frames:
+	// local frame (handle at hp) and global frame (handle at hp + origin)
+	origin := f32.Pt(423, 278)
+	e.dragTo(i, f32.Pt(hp.X+30, hp.Y-10), hp, iw, ih)
+	wantT, wantL := e.times[1], e.levels[1]
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+	e.beginDrag(i, 1, f32.Pt(hp.X+origin.X, hp.Y+origin.Y), f32.Pt(hp.X+origin.X, hp.Y+origin.Y))
+	e.dragTo(i, f32.Pt(hp.X+origin.X+30, hp.Y+origin.Y-10), f32.Pt(hp.X+origin.X, hp.Y+origin.Y), iw, ih)
+	if e.times[1] != wantT || e.levels[1] != wantL {
+		t.Errorf("frame-dependent drag: local gave (t=%d l=%d), global gave (t=%d l=%d)",
+			wantT, wantL, e.times[1], e.levels[1])
+	}
+	if wantT != 70 || wantL != 30 {
+		t.Errorf("want (t=70 l=30), got (t=%d l=%d)", wantT, wantL)
 	}
 }
