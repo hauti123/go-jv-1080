@@ -38,6 +38,60 @@ func TestRelativeTimes(t *testing.T) {
 	}
 }
 
+// TestPressDragSequence simulates the full event flow of Layout with a
+// single screen tag: press near a handle -> grab -> drags move exactly
+// that point relative to the press position (no jumping to fixed values).
+func TestPressDragSequence(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+	iw, ih := float32(300), float32(100)
+
+	// press exactly at point 1's position (px mapping: padX=8, padT=8)
+	padX, padT := float32(8), float32(8)
+	p1 := e.points[1]
+	press := f32.Pt(padX+p1.X*iw, padT+(1-p1.Y)*ih)
+
+	// emulate the Press handler: nearest handle, record start
+	best, bestD := 0, float32(1<<30)
+	for i := range e.points {
+		p := e.points[i]
+		pp := f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
+		d := (press.X-pp.X)*(press.X-pp.X) + (press.Y-pp.Y)*(press.Y-pp.Y)
+		if d < bestD {
+			best, bestD = i, d
+		}
+	}
+	if best != 1 {
+		t.Fatalf("press hit handle %d, want 1", best)
+	}
+	e.dragging, e.dragIdx = true, best
+	e.start = press
+	e.startVal = e.points[best]
+
+	// drag 30px up and 60px right: point must move by exactly that delta,
+	// clamped only at the neighbour (point 2 at cum 120/508 = 0.236;
+	// unclamped target would be 0.357, so the clamp to 0.236-envGap applies)
+	before := e.points[1]
+	e.dragTo(1, f32.Pt(press.X+60, press.Y-30), iw, ih)
+	wantX := before.X + 60/iw
+	if wantX > e.points[2].X-envGap {
+		wantX = e.points[2].X - envGap // clamped at the next point
+	}
+	wantY := before.Y + 30/ih
+	if d := e.points[1].X - wantX; d < -1e-4 || d > 1e-4 {
+		t.Errorf("after drag x = %v, want %v", e.points[1].X, wantX)
+	}
+	if d := e.points[1].Y - wantY; d < -1e-4 || d > 1e-4 {
+		t.Errorf("after drag y = %v, want %v", e.points[1].Y, wantY)
+	}
+	// no jump to a fixed position: the segment time grew by the drag amount
+	got := e.times()
+	wantSeg := 40 + int(roundF((wantX-before.X)*508))
+	if got[1] < wantSeg-2 || got[1] > wantSeg+2 {
+		t.Errorf("segment t2 = %d, want ~%d", got[1], wantSeg)
+	}
+}
+
 // TestDragMathRegression pins the drag behavior via dragTo: dragging up
 // raises the level, dragging right raises the relative time of the segment,
 // far drags are clamped (max level +63, segment 0..127).

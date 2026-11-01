@@ -34,9 +34,8 @@ type Envelope struct {
 	// values -63..+63.
 	OnChange func(timeKey string, timeVal int, levelKey string, levelVal int)
 
-	points   [4]f32.Point // normalized x (0..1 = time 0..127), y (0..1 = level -63..+63)
+	points   [4]f32.Point // x: cumulative time 0..1 (= sum t1..ti over 4*127), y: level 0..1 (-63..+63)
 	defaults [4]f32.Point
-	tags     [4]envTag
 	active   int
 
 	dragging  bool
@@ -46,8 +45,6 @@ type Envelope struct {
 	startVal  f32.Point
 	lastPress time.Duration
 }
-
-type envTag struct{ i int }
 
 const (
 	envGap  = 0.03 // min distance between neighbouring points
@@ -70,9 +67,6 @@ func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
 		{X: 0.96, Y: 0.0}, // release end
 	}
 	e.points = e.defaults
-	for i := range e.tags {
-		e.tags[i] = envTag{i: i}
-	}
 	return e
 }
 
@@ -235,31 +229,31 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	// Origin marker.
 	fillRect(gtx, padX-3, baseY-3, 6, 6, rgb(0x2F7F3A))
 
-	// The whole screen is the envelope's event area; the tags decide
-	// which handle a press/drag belongs to (declared per handle below).
+	// One tag for the whole screen: hit-test the press against the
+	// handles, then grab the pointer on this tag so all following
+	// Drag events come back to us.
 	screen := clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops)
 	event.Op(gtx.Ops, e)
 	screen.Pop()
 
-	// Handles: hit area first (so events work), then events, then visuals.
-	for i := range e.points {
-		p := px(e.points[i])
-		cs := clip.Rect{
-			Min: image.Pt(int(p.X-14), int(p.Y-14)),
-			Max: image.Pt(int(p.X+14), int(p.Y+14)),
-		}.Push(gtx.Ops)
-		event.Op(gtx.Ops, &e.tags[i])
-		cs.Pop()
-	}
-	// Drain events addressed to the screen tag itself (fallback for
-	// presses outside all handle areas).
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: e, Kinds: pointer.Press})
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: e,
+			Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
+		})
 		if !ok {
 			break
 		}
-		if pe, ok := ev.(pointer.Event); ok && pe.Kind == pointer.Press && pe.Buttons == pointer.ButtonPrimary {
-			// pick the nearest handle and start dragging it
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		switch pe.Kind {
+		case pointer.Press:
+			if pe.Buttons != pointer.ButtonPrimary {
+				continue
+			}
+			// pick the nearest handle
 			best, bestD := 0, float32(1<<30)
 			for i := range e.points {
 				p := px(e.points[i])
@@ -268,59 +262,28 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 					best, bestD = i, d
 				}
 			}
-			e.dragging = true
-			e.dragIdx = best
-			e.pointerID = pe.PointerID
-			e.start = pe.Position
-			e.startVal = e.points[best]
-			e.active = best
-			gtx.Execute(pointer.GrabCmd{Tag: &e.tags[best], ID: pe.PointerID})
-		}
-	}
-	for i := range e.points {
-		tag := &e.tags[i]
-		for {
-			ev, ok := gtx.Event(pointer.Filter{
-				Target: tag,
-				Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
-			})
-			if !ok {
-				break
+			if pe.Time-e.lastPress < dblClick && e.active == best {
+				e.points[best] = e.defaults[best] // double-click resets
+				e.clampPoint(best)
+				e.emit(best)
+			} else {
+				e.dragging = true
+				e.dragIdx = best
+				e.pointerID = pe.PointerID
+				e.start = pe.Position
+				e.startVal = e.points[best]
+				gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
 			}
-			pe, ok := ev.(pointer.Event)
-			if !ok {
+			e.active = best
+			e.lastPress = pe.Time
+		case pointer.Drag:
+			if !e.dragging || pe.PointerID != e.pointerID {
 				continue
 			}
-			switch pe.Kind {
-			case pointer.Press:
-				if pe.Buttons != pointer.ButtonPrimary {
-					continue
-				}
-				if pe.Time-e.lastPress < dblClick {
-					e.points[i] = e.defaults[i] // double-click resets
-					e.clampPoint(i)
-					e.emit(i)
-				} else {
-					e.dragging = true
-					e.dragIdx = i
-					e.pointerID = pe.PointerID
-					e.start = pe.Position
-					e.startVal = e.points[i]
-					gtx.Execute(pointer.GrabCmd{Tag: tag, ID: pe.PointerID})
-				}
-				e.active = i
-				e.lastPress = pe.Time
-			case pointer.Drag:
-				if !e.dragging || e.dragIdx != i || pe.PointerID != e.pointerID {
-					continue
-				}
-				e.dragTo(i, pe.Position, iw, ih)
-				e.emit(i)
-			case pointer.Release, pointer.Cancel:
-				if e.dragging && e.dragIdx == i {
-					e.dragging = false
-				}
-			}
+			e.dragTo(e.dragIdx, pe.Position, iw, ih)
+			e.emit(e.dragIdx)
+		case pointer.Release, pointer.Cancel:
+			e.dragging = false
 		}
 	}
 	// Handle visuals.
