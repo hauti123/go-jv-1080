@@ -88,12 +88,30 @@ func (k *Knob) SetRange(min, max int) {
 }
 
 // angle returns the scale angle of the current value in degrees
-// (0 = 12 o'clock, clockwise positive, -135..+135).
+// (0 = 12 o'clock, clockwise positive, -135..+135). For bipolar and pan
+// knobs the center value maps to 0 deg (12 o'clock), negative values to
+// the left (negative angles) and positive values to the right.
 func (k *Knob) angle() float64 {
+	if k.Style == KnobBipolar || k.Style == KnobPan {
+		c := k.center()
+		v := clampInt(k.value, k.Min, k.Max) - c
+		if v >= 0 {
+			span := k.Max - c
+			if span <= 0 {
+				return 0
+			}
+			return MaxAngle * float64(v) / float64(span)
+		}
+		span := c - k.Min
+		if span <= 0 {
+			return 0
+		}
+		return MinAngle * float64(-v) / float64(span)
+	}
 	return angleOf(k.Min, k.Max, k.value)
 }
 
-// angleOf maps a value in [min,max] onto [MinAngle,MaxAngle].
+// angleOf maps a value in [min,max] linearly onto [MinAngle,MaxAngle].
 func angleOf(min, max, v int) float64 {
 	span := max - min
 	if span <= 0 {
@@ -126,10 +144,14 @@ func (k *Knob) formatValue() string {
 	}
 }
 
-// center returns the value that maps to 12 o'clock.
+// center returns the value that maps to 12 o'clock: the middle of the
+// range for bipolar and pan knobs.
 func (k *Knob) center() int {
 	switch k.Style {
 	case KnobBipolar, KnobPan:
+		if k.Style == KnobPan {
+			return 64 // raw pan center (C)
+		}
 		return (k.Min + k.Max) / 2
 	default:
 		return k.Min
@@ -244,15 +266,26 @@ func (k *Knob) set(v int) {
 
 // draw renders the knob in the MK-II Tone Stack style of cmd/gui-proto with
 // a green LED arc, radial ticks, metal cap and LED readout in the center.
+// For bipolar/pan knobs the lit portion grows from 12 o'clock towards the
+// value (left for negative, right for positive); at the center position
+// only the 12 o'clock tick is lit.
 func (k *Knob) draw(gtx layout.Context, th *Theme, size float64) {
 	cx, cy := size/2, size/2
-	angle := k.angle()
 
-	// LED arc: unlit base, lit up to the value (gui-proto drawAmp, green)
+	// lit range of the scale: [litFrom, litTo]
+	litFrom, litTo := litRange(k)
+
+	// LED arc: unlit base over the whole scale, lit portion (gui-proto
+	// drawAmp, green)
 	strokeArc(gtx, cx, cy, size*0.329, MinAngle, MaxAngle, 5, th.ArcBase)
-	strokeArc(gtx, cx, cy, size*0.329, MinAngle, angle, 5, th.Lit)
-	// radial ticks around the arc
-	drawTicks(gtx, cx, cy, size*0.371, size*0.421, 40, 4, th.TickBase, th.Lit, MinAngle, MaxAngle, angle)
+	if litTo > litFrom {
+		strokeArc(gtx, cx, cy, size*0.329, litFrom, litTo, 5, th.Lit)
+	} else {
+		// center position: light only the 12 o'clock tick itself
+		strokeArc(gtx, cx, cy, size*0.329, -0.5, 0.5, 5, th.Lit)
+	}
+	// radial ticks around the arc; ticks between litFrom and litTo are lit
+	drawTicksRange(gtx, cx, cy, size*0.371, size*0.421, 40, 4, th.TickBase, th.Lit, MinAngle, MaxAngle, litFrom, litTo)
 
 	// metal cap
 	fillCircleGradient(gtx, cx, cy, size*0.271, th.CapTop, th.CapBot)
@@ -281,6 +314,21 @@ func (k *Knob) draw(gtx layout.Context, th *Theme, size float64) {
 	offset(gtx, int(cx)-ts.X/2, int(size)+1, func() {
 		DrawPixelText(gtx, k.Title, cell)
 	})
+}
+
+// litRange returns the lit angle range of the scale. Min-max knobs light
+// from the left end (7 o'clock) up to the value; bipolar and pan knobs
+// light from 12 o'clock towards the value (left for negative values,
+// right for positive ones); at the center position the range is empty.
+func litRange(k *Knob) (from, to float64) {
+	angle := k.angle()
+	if k.Style == KnobBipolar || k.Style == KnobPan {
+		if angle >= 0 {
+			return 0, angle
+		}
+		return angle, 0
+	}
+	return MinAngle, angle
 }
 
 func strokeCircle(gtx layout.Context, cx, cy, r float64, width float32, col color.NRGBA) {

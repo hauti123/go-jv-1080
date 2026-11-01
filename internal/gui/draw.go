@@ -90,6 +90,12 @@ func fillRect(gtx layout.Context, x, y, w, h float32, col color.NRGBA) {
 // angle use the lit color, the rest the base color. Major ticks every
 // majorEvery-th tick are longer and thicker.
 func drawTicks(gtx layout.Context, cx, cy, rIn, rOut float64, count, majorEvery int, base, lit color.NRGBA, a0, a1, valueAngle float64) {
+	drawTicksRange(gtx, cx, cy, rIn, rOut, count, majorEvery, base, lit, a0, a1, a0, valueAngle)
+}
+
+// drawTicksRange draws radial tick marks from a0..a1; ticks inside the lit
+// range [litFrom, litTo] use the lit color, the rest the base color.
+func drawTicksRange(gtx layout.Context, cx, cy, rIn, rOut float64, count, majorEvery int, base, lit color.NRGBA, a0, a1, litFrom, litTo float64) {
 	for i := 0; i <= count; i++ {
 		major := majorEvery > 0 && i%majorEvery == 0
 		a := a0 + (a1-a0)*float64(i)/float64(count)
@@ -98,7 +104,7 @@ func drawTicks(gtx layout.Context, cx, cy, rIn, rOut float64, count, majorEvery 
 			ri, ro, w = rIn+2, rOut-2, 0.8
 		}
 		col := base
-		if a <= valueAngle+0.01 {
+		if a >= litFrom-0.01 && a <= litTo+0.01 {
 			col = lit
 		}
 		strokeLine(gtx, polarPt(cx, cy, ri, a), polarPt(cx, cy, ro, a), float32(w), col)

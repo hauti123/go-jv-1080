@@ -95,10 +95,66 @@ func TestKnobFormatPan(t *testing.T) {
 			t.Errorf("pan formatValue(%d) = %q, want %q", v, got, want)
 		}
 	}
-	// C must map to 12 o'clock area (64 of 0..127)
+	// C (64) must map to 12 o'clock, L63 to the far left, R63 to the far right
 	k.Set(64)
-	if math.Abs(k.angle()-angleOf(0, 127, 64)) > 1e-9 {
-		t.Errorf("pan angle at C = %v, want %v", k.angle(), angleOf(0, 127, 64))
+	if math.Abs(k.angle()) > 1e-9 {
+		t.Errorf("pan angle at C = %v, want 0 (12 o'clock)", k.angle())
+	}
+	k.Set(127)
+	if math.Abs(k.angle()-MaxAngle) > 1e-9 {
+		t.Errorf("pan angle at R63 = %v, want %v", k.angle(), MaxAngle)
+	}
+	k.Set(0)
+	if math.Abs(k.angle()-MinAngle) > 1e-9 {
+		t.Errorf("pan angle at L64 = %v, want %v", k.angle(), MinAngle)
+	}
+	k.Set(1)
+	if k.angle() >= 0 || k.angle() <= MinAngle {
+		t.Errorf("pan angle at L63 = %v, want in (%v, 0)", k.angle(), MinAngle)
+	}
+}
+
+func TestBipolarAngleSymmetric(t *testing.T) {
+	k := NewKnob(KnobBipolar, "OCTAVE", -3, 3)
+	for v, want := range map[int]float64{-3: MinAngle, -1: -45, 0: 0, 1: 45, 3: MaxAngle} {
+		k.Set(v)
+		if math.Abs(k.angle()-want) > 1e-9 {
+			t.Errorf("bipolar angle(%d) = %v, want %v", v, k.angle(), want)
+		}
+	}
+}
+
+func TestLitRangeCentered(t *testing.T) {
+	// bipolar at 0: lit range is empty (only the 12 o'clock tick lit)
+	k := NewKnob(KnobBipolar, "OCTAVE", -3, 3)
+	k.Set(0)
+	from, to := litRange(k)
+	if from != 0 || to != 0 {
+		t.Errorf("litRange at 0 = [%v %v], want [0 0]", from, to)
+	}
+	k.Set(2)
+	from, to = litRange(k)
+	if from != 0 || math.Abs(to-90) > 1e-9 {
+		t.Errorf("litRange at +2 = [%v %v], want [0 90]", from, to)
+	}
+	k.Set(-2)
+	from, to = litRange(k)
+	if math.Abs(from+90) > 1e-9 || to != 0 {
+		t.Errorf("litRange at -2 = [%v %v], want [-90 0]", from, to)
+	}
+	// pan at C
+	p := NewKnob(KnobPan, "PAN", 0, 127)
+	p.Set(64)
+	from, to = litRange(p)
+	if from != 0 || to != 0 {
+		t.Errorf("pan litRange at C = [%v %v], want [0 0]", from, to)
+	}
+	// min-max knob: lit range always starts at the left end
+	m := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	m.Set(64)
+	from, to = litRange(m)
+	if from != MinAngle {
+		t.Errorf("minmax litRange from = %v, want %v", from, MinAngle)
 	}
 }
 
