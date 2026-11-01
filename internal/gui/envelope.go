@@ -7,6 +7,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 )
 
@@ -156,6 +157,10 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	}
 	total := h + gtx.Dp(10) // title row below the screen
 	gtx.Constraints = layout.Exact(image.Pt(w, total))
+	// All drawing and event handling below happens in this widget's own
+	// coordinate system (origin at the widget's top-left).
+	off := op.Offset(image.Pt(0, 0)).Push(gtx.Ops)
+	defer off.Pop()
 
 	padX := float32(gtx.Dp(8))
 	padT := float32(gtx.Dp(8))
@@ -303,13 +308,13 @@ func (e *Envelope) dragTo(i int, pos f32.Point, iw, ih float32) {
 	e.relayout()
 }
 
-// setTime sets the relative time of point i to v, clamped so that the
-// segment stays within 0..127 and the total of all four segments within
-// envMaxTime; all following segments are shifted by the same delta so
-// their lengths are preserved.
+// setTime sets the relative time (segment length) of point i to v,
+// clamped to 0..127. The point's absolute position is the cumulative sum
+// of t1..ti, so changing segment i shifts every following point by the
+// same delta (their own segments keep their length). The total span is
+// kept within envMaxTime by clamping v against the sum of the others.
 func (e *Envelope) setTime(i, v int) {
 	v = clampInt(v, 0, 127)
-	// total-span clamp: keep the sum of the other segments
 	others := 0
 	for j := 0; j < 4; j++ {
 		if j != i {
@@ -317,14 +322,9 @@ func (e *Envelope) setTime(i, v int) {
 		}
 	}
 	v = clampInt(v, 0, envMaxTime-others)
-	delta := v - e.times[i]
-	if delta == 0 {
-		return
-	}
 	e.times[i] = v
-	for j := i + 1; j < 4; j++ {
-		e.times[j] = clampInt(e.times[j]-delta, 0, 127)
-	}
+	// following segments are untouched, so relayout() shifts their
+	// cumulative pixel positions by the same delta automatically
 }
 
 // emit reports the current device values of point i through OnChange.

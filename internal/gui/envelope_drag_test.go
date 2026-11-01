@@ -38,8 +38,8 @@ func TestSetTimeBounds(t *testing.T) {
 	if total > envMaxTime {
 		t.Errorf("total = %d > %d", total, envMaxTime)
 	}
-	if e.times[2] != 40-87 || e.times[3] != 40-87 { // 127-40=87 shifted off t3,t4
-		t.Logf("segments after clamp: %v", e.times)
+	if e.times[2] != 40 || e.times[3] != 40 {
+		t.Errorf("following segments changed: %v, want t3=t4=40 (lengths preserved)", e.times)
 	}
 	// shrink t1 to 0: following segments grow back, each <= 127
 	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 0, 0, 0})
@@ -71,9 +71,9 @@ func TestDragInDeviceUnits(t *testing.T) {
 	if e.levels[1] != 30 {
 		t.Errorf("l2 after +10px up = %d, want 30", e.levels[1])
 	}
-	// following segments shifted along by -30 (kept >= 0)
-	if e.times[2] != 10 || e.times[3] != 10 {
-		t.Errorf("following segments = %d,%d, want 10,10 (shifted along)", e.times[2], e.times[3])
+	// following segments keep their length (only their absolute x moves)
+	if e.times[2] != 40 || e.times[3] != 40 {
+		t.Errorf("following segments = %d,%d, want 40,40 (unchanged)", e.times[2], e.times[3])
 	}
 	// pixel position reflects cumulative time
 	if p := e.points[1].X; p < 109.0/508-0.001 || p > 111.0/508+0.001 {
@@ -105,8 +105,8 @@ func TestPerHandleDrag(t *testing.T) {
 		if e.times[i] <= 40 {
 			t.Errorf("handle %d: x-drag did not grow segment (t=%d)", i, e.times[i])
 		}
-		if i < 3 && e.times[i+1] >= 40 {
-			t.Errorf("handle %d: following segment did not shrink along (t%d=%d)", i, i+1, e.times[i+1])
+		if i < 3 && e.times[i+1] != 40 {
+			t.Errorf("handle %d: following segment changed (t%d=%d), want 40 (length preserved)", i, i+1, e.times[i+1])
 		}
 	}
 }
