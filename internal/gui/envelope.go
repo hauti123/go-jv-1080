@@ -8,7 +8,6 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
 )
 
@@ -160,11 +159,8 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	}
 	total := h + gtx.Dp(10) // title row below the screen
 	gtx.Constraints = layout.Exact(image.Pt(w, total))
-	// All drawing and event handling below happens in this widget's own
-	// coordinate system (origin at the widget's top-left).
-	off := op.Offset(image.Pt(0, 0)).Push(gtx.Ops)
-	defer off.Pop()
 
+	log.Printf("ENV layout: w=%d h=%d total=%d", w, h, total)
 	padX := float32(gtx.Dp(8))
 	padT := float32(gtx.Dp(8))
 	padB := float32(gtx.Dp(14))
@@ -250,6 +246,7 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 			e.dragTo(e.dragIdx, pe.Position, iw, ih)
 			e.emit(e.dragIdx)
 		case pointer.Release, pointer.Cancel:
+			log.Printf("ENV release: pos=(%.1f,%.1f) dragging=%v", pe.Position.X, pe.Position.Y, e.dragging)
 			if pe.PointerID == e.pointerID {
 				e.dragging = false
 			}
