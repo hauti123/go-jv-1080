@@ -1,48 +1,91 @@
-# Architecture: GUI, controller and device layers
+# Architecture: GUI and device layers
 
-The JV-1080 editor is split into three layers with strict one-way
-dependencies. The GUI widgets never import the MIDI or device packages;
-they only know the small `gui.Controller` interface. This keeps the widget
-code testable and reusable.
+The JV-1080 editor is split into layers with strict one-way
+dependencies. The GUI widgets never import the MIDI or device packages
+and never deal with SysEx addresses or offsets: each knob is bound to a
+device parameter through a path-like key string (e.g.
+"patch/temp/common/level"), which is resolved solely in the device layer
+(`internal/jv1080`). This keeps the widget code testable and reusable.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│  cmd/jv1080-gui (sample app)                                          │
-│  • creates the Gio window and the three knobs (level / pan / octave) │
-│  • wires knob OnChange callbacks to Controller.Set                   │
-│  • forwards Controller.Update notifications to the knobs             │
-└───────────────┬──────────────────────────────┬───────────────────────┘
-                │ uses                            │ implements
-                ▼                                  ▼
-┌───────────────────────────────┐   ┌────────────────────────────────────┐
-│  internal/gui (widgets)       │   │  internal/gui.JVController         │
-│  • Knob gadget (3 styles)     │   │  • gui.Controller implementation   │
-│  • MK-II style drawing +     │   │  • maps gui.Param → SysEx address  │
-│    5x7 LED font (gui-proto)  │   │  • decodes unsolicited DT1 into    │
-│  • dark green MK-II theme     │   │  • decodes unsolicited DT1 into    │
-│  • gui.Controller interface   │   │    typed Param updates             │
-│  • gui.Param descriptor       │   │  • attached to midi.Device         │
-└───────────────┬───────────────┘   │    callbacks                       │
-                │ implements          └──────────────┬─────────────────────┘
-                ▼                                    │ uses
-┌───────────────────────────────┐                  ▼
-│  gui.Controller (interface)   │   ┌────────────────────────────────────┐
-│  Get / Set / Update           │   │  internal/jv1080 (device client)   │
-└───────────────────────────────┘   │  • single-parameter DT1 writes     │
-                                    │    (SetPatchParameter / ReadRaw)   │
-                                    │  • RQ1/DT1 request-reply reads     │
-                                    └──────────────┬─────────────────────┘
-                                                   │ uses
-                                                   ▼
-                                    ┌────────────────────────────────────┐
-                                    │  internal/midi                     │
-                                    │  • Device: ports, send, receive,   │
-                                    │    registered callbacks for        │
-                                    │    unsolicited messages            │
-                                    │  • message: serializable structs   │
-                                    │    (RQ1/DT1/CC/PC/NoteOn/...)      │
-                                    └────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  cmd/jv1080-gui (sample app)                                  │
+│  • creates the Gio window and the three knobs                 │
+│    (level / pan / octave, bound to "patch/temp/common/...")   │
+│  • knob.OnChange → client.SetParameter(key, uiValue)          │
+│  • client.OnParameterChange → knob.Set(uiValue)               │
+└───────────────┬──────────────────────────────────────────────┘
+                │ uses (knob.Key strings only, no addresses)
+                ▼
+┌───────────────────────────────┐
+│  internal/gui (widgets)       │
+│  • Knob gadget (3 styles,     │
+│    each with a Key field)     │
+│  • MK-II style drawing +      │
+│    5x7 LED font (gui-proto)   │
+│  • dark green MK-II theme     │
+└───────────────┬───────────────┘
+                │ uses
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│  internal/jv1080 (device client)                              │
+│  • key → SysEx address map (params.go, patch/temp/... only)   │
+│  • SetParameter(key string, value any) error                  │
+│  • GetParameter(key string) (any, error)                      │
+│  • OnParameterChange(func(key string, value any))             │
+│    decodes unsolicited DT1 into key + UI value                │
+│  • UI value ↔ wire conversion (bipolar offset, pan C/L/R)     │
+│  • lower-level API unchanged: ReadRaw/WriteRaw, dumps, ...    │
+└───────────────┬──────────────────────────────────────────────┘
+                │ uses
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│  internal/midi                                                │
+│  • Device: ports, send, receive, registered callbacks for     │
+│    unsolicited messages                                       │
+│  • message: serializable structs (RQ1/DT1/CC/PC/NoteOn/...)   │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+## Parameter keys
+
+Parameters are addressed with path-like keys; only the patch-mode
+temporary patch is supported for now (`patch/user/N/...` comes later):
+
+- `patch/temp/common/level` — raw 0-127
+- `patch/temp/common/pan` — UI value `"C"`, `"L1".."L63"`, `"R1".."R63"` (wire 0-127, 64 = C)
+- `patch/temp/common/octave` — UI value -3..+3 (wire 0-6)
+- `patch/temp/tone/<n>/<name>` — tone parameters, n = 1-4
+
+The mapping from key to SysEx address and the UI-value ↔ wire-byte
+conversion live solely in `internal/jv1080` (`params.go`,
+`Client.SetParameter`/`GetParameter`/`OnParameterChange`). The GUI glue
+layer (`cmd/jv1080-gui`) and the widgets never deal with addresses,
+offsets or raw bytes.
+
+## Data flow
+
+**User turns a knob (GUI → device):**
+
+1. `Knob.Layout` detects a drag/scroll, changes its value and calls
+   `OnChange(uiValue)`.
+2. The sample app calls `client.SetParameter(knob.Key, uiValue)`.
+3. `internal/jv1080` resolves the key to a SysEx address and converts
+   the UI value to wire bytes (e.g. +2 octave → 5, "L13" → 51).
+4. A single DT1 with exactly one data byte is sent — only the changed
+   parameter is transmitted.
+
+**Device value changes (device → GUI):**
+
+1. The JV-1080 sends an unsolicited DT1 (front panel edit, another
+   editor, a dump echo).
+2. `midi.Device` dispatches the raw message to the client's handler.
+3. `internal/jv1080` maps the DT1 address back to a key, decodes the
+   wire bytes into a UI value and invokes the `OnParameterChange`
+   callbacks with `(key, value)`.
+4. The sample app calls `knob.Set(value)` on the knob with that key —
+   only the one changed knob is updated.
+
 
 ## Data flow
 
@@ -79,14 +122,6 @@ code testable and reusable.
 | `internal/midi/message` | Individual MIDI messages as structs, serializable to/from byte streams (RQ1, DT1, CC, PC, NoteOn, identity). |
 | `internal/midi/sysex`, `internal/midi/controlchange` | SysEx-level and control-change helpers on top of `message`. |
 | `internal/jv1080` | JV-1080 parameter address map, `Patch`/`Performance` models and the high-level `Client` (dumps, single reads, single-parameter writes, store). |
-| `internal/gui` | GUI widgets (`Knob`, 5x7 LED font, theme) plus the `Controller`/`Param` abstraction and the `JVController` implementation that bridges to `internal/jv1080`. |
+| `internal/gui` | GUI widgets: `Knob` (with `Key` binding), 5x7 LED font, MK-II theme. No device imports. |
 | `cmd/jv1080-gui` | Sample GUI app (level/pan/octave knobs). |
 | `cmd/jv1080-cli` | Command line utility for raw MIDI inspection and patch manipulation. |
-
-## Why the Controller interface
-
-`internal/gui` defines `Controller` (Get/Set/Update) so the widgets can be
-developed and tested without any MIDI hardware: a fake controller can drive
-the knobs in tests, and the real `JVController` plugs in only in
-`cmd/jv1080-gui`. The GUI therefore has a clean, one-way dependency on the
-device layer through this narrow interface.

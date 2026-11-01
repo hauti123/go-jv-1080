@@ -37,14 +37,19 @@ const (
 // lights up as the value moves; the moving scale plus the LED readout
 // carry the value, so no separate pointer is needed.
 //
+// A knob is bound to a device parameter through Key, a path-like string
+// (e.g. "patch/temp/common/level") that is resolved solely by the device
+// layer. Values passed to OnChange are the UI values as displayed.
+//
 // Interaction (same as gui-proto): drag up/down or left/right to dial,
 // mouse wheel for steps, Shift = fine, double-click resets to Min.
 type Knob struct {
 	Style KnobStyle
 	Title string // mandatory, written below the scale
 	Unit  string // optional, written in the free space between the scale ends
+	Key   string // device parameter key this knob is bound to, e.g. "patch/temp/common/level"
 
-	Min, Max int // value range (for KnobPan: 0..127 raw pan, 64 = C)
+	Min, Max int // value range in UI units (for KnobPan: -63..+63, 0 = C; for KnobBipolar: signed)
 
 	value int
 
@@ -60,12 +65,14 @@ type Knob struct {
 	OnChange func(v int)
 }
 
-// NewKnob returns a knob with the given style, title and value range.
-func NewKnob(style KnobStyle, title string, min, max int) *Knob {
+// NewKnob returns a knob with the given style, title, device parameter key
+// and value range in UI units. For KnobPan the range is -63..+63 (0 = C);
+// for KnobBipolar a signed range like -3..+3.
+func NewKnob(style KnobStyle, title, key string, min, max int) *Knob {
 	if max < min {
 		min, max = max, min
 	}
-	return &Knob{Style: style, Title: title, Min: min, Max: max, value: min, lastPress: -time.Hour}
+	return &Knob{Style: style, Title: title, Key: key, Min: min, Max: max, value: min, lastPress: -time.Hour}
 }
 
 // Value returns the current value.
@@ -93,16 +100,15 @@ func (k *Knob) SetRange(min, max int) {
 // the left (negative angles) and positive values to the right.
 func (k *Knob) angle() float64 {
 	if k.Style == KnobBipolar || k.Style == KnobPan {
-		c := k.center()
-		v := clampInt(k.value, k.Min, k.Max) - c
+		v := clampInt(k.value, k.Min, k.Max) // UI value, centered on 0
 		if v >= 0 {
-			span := k.Max - c
+			span := k.Max
 			if span <= 0 {
 				return 0
 			}
 			return MaxAngle * float64(v) / float64(span)
 		}
-		span := c - k.Min
+		span := -k.Min
 		if span <= 0 {
 			return 0
 		}
@@ -120,39 +126,36 @@ func angleOf(min, max, v int) float64 {
 	return MinAngle + (MaxAngle-MinAngle)*float64(clampInt(v, min, max)-min)/float64(span)
 }
 
-// formatValue renders the value according to the knob style.
+// formatValue renders the value according to the knob style. The knob
+// value is stored in UI units: signed for bipolar, -63..+63 for pan
+// (0 = C), plain for min-max.
 func (k *Knob) formatValue() string {
 	switch k.Style {
 	case KnobBipolar:
-		v := k.value - k.center()
-		if v >= 0 {
-			return "+" + itoa(v)
+		if k.value >= 0 {
+			return "+" + itoa(k.value)
 		}
-		return itoa(v)
+		return itoa(k.value)
 	case KnobPan:
-		v := k.value - 64
 		switch {
-		case v == 0:
+		case k.value == 0:
 			return "C"
-		case v < 0:
-			return "L" + itoa(-v)
+		case k.value < 0:
+			return "L" + itoa(-k.value)
 		default:
-			return "R" + itoa(v)
+			return "R" + itoa(k.value)
 		}
 	default:
 		return itoa(k.value)
 	}
 }
 
-// center returns the value that maps to 12 o'clock: the middle of the
-// range for bipolar and pan knobs.
+// center returns the value that maps to 12 o'clock: 0 for bipolar and pan
+// knobs (their UI ranges are centered on 0), the minimum for min-max.
 func (k *Knob) center() int {
 	switch k.Style {
 	case KnobBipolar, KnobPan:
-		if k.Style == KnobPan {
-			return 64 // raw pan center (C)
-		}
-		return (k.Min + k.Max) / 2
+		return 0
 	default:
 		return k.Min
 	}

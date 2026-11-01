@@ -19,7 +19,7 @@ func TestScaleAngles(t *testing.T) {
 }
 
 func TestKnobAngle(t *testing.T) {
-	k := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	k := NewKnob(KnobMinMax, "LEVEL", "patch/temp/common/level", 0, 127)
 	if k.angle() != MinAngle {
 		t.Errorf("angle at min = %v, want %v", k.angle(), MinAngle)
 	}
@@ -35,7 +35,7 @@ func TestKnobAngle(t *testing.T) {
 }
 
 func TestKnobClamp(t *testing.T) {
-	k := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	k := NewKnob(KnobMinMax, "LEVEL", "patch/temp/common/level", 0, 127)
 	k.Set(200)
 	if k.Value() != 127 {
 		t.Errorf("Set(200) = %d, want 127", k.Value())
@@ -47,7 +47,7 @@ func TestKnobClamp(t *testing.T) {
 }
 
 func TestKnobFormatMinMax(t *testing.T) {
-	k := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	k := NewKnob(KnobMinMax, "LEVEL", "patch/temp/common/level", 0, 127)
 	k.Set(0)
 	if got := k.formatValue(); got != "0" {
 		t.Errorf("formatValue at 0 = %q, want %q", got, "0")
@@ -59,7 +59,7 @@ func TestKnobFormatMinMax(t *testing.T) {
 }
 
 func TestKnobFormatBipolar(t *testing.T) {
-	k := NewKnob(KnobBipolar, "OCTAVE", -3, 3)
+	k := NewKnob(KnobBipolar, "OCTAVE", "patch/temp/common/octave", -3, 3)
 	cases := map[int]string{-3: "-3", -1: "-1", 0: "+0", 1: "+1", 3: "+3"}
 	for v, want := range cases {
 		k.Set(v)
@@ -87,35 +87,35 @@ func TestKnobFormatBipolar(t *testing.T) {
 }
 
 func TestKnobFormatPan(t *testing.T) {
-	k := NewKnob(KnobPan, "PAN", 0, 127)
-	cases := map[int]string{0: "L64", 1: "L63", 63: "L1", 64: "C", 65: "R1", 126: "R62", 127: "R63"}
+	k := NewKnob(KnobPan, "PAN", "patch/temp/common/pan", -63, 63)
+	cases := map[int]string{-63: "L63", -1: "L1", 0: "C", 1: "R1", 63: "R63"}
 	for v, want := range cases {
 		k.Set(v)
 		if got := k.formatValue(); got != want {
 			t.Errorf("pan formatValue(%d) = %q, want %q", v, got, want)
 		}
 	}
-	// C (64) must map to 12 o'clock, L63 to the far left, R63 to the far right
-	k.Set(64)
+	// C (0) must map to 12 o'clock, R63 to the far right, L63 to the far left
+	k.Set(0)
 	if math.Abs(k.angle()) > 1e-9 {
 		t.Errorf("pan angle at C = %v, want 0 (12 o'clock)", k.angle())
 	}
-	k.Set(127)
+	k.Set(63)
 	if math.Abs(k.angle()-MaxAngle) > 1e-9 {
 		t.Errorf("pan angle at R63 = %v, want %v", k.angle(), MaxAngle)
 	}
-	k.Set(0)
+	k.Set(-63)
 	if math.Abs(k.angle()-MinAngle) > 1e-9 {
-		t.Errorf("pan angle at L64 = %v, want %v", k.angle(), MinAngle)
+		t.Errorf("pan angle at L63 = %v, want %v", k.angle(), MinAngle)
 	}
-	k.Set(1)
+	k.Set(-1)
 	if k.angle() >= 0 || k.angle() <= MinAngle {
-		t.Errorf("pan angle at L63 = %v, want in (%v, 0)", k.angle(), MinAngle)
+		t.Errorf("pan angle at L1 = %v, want in (%v, 0)", k.angle(), MinAngle)
 	}
 }
 
 func TestBipolarAngleSymmetric(t *testing.T) {
-	k := NewKnob(KnobBipolar, "OCTAVE", -3, 3)
+	k := NewKnob(KnobBipolar, "OCTAVE", "patch/temp/common/octave", -3, 3)
 	for v, want := range map[int]float64{-3: MinAngle, -1: -45, 0: 0, 1: 45, 3: MaxAngle} {
 		k.Set(v)
 		if math.Abs(k.angle()-want) > 1e-9 {
@@ -126,7 +126,7 @@ func TestBipolarAngleSymmetric(t *testing.T) {
 
 func TestLitRangeCentered(t *testing.T) {
 	// bipolar at 0: lit range is empty (only the 12 o'clock tick lit)
-	k := NewKnob(KnobBipolar, "OCTAVE", -3, 3)
+	k := NewKnob(KnobBipolar, "OCTAVE", "patch/temp/common/octave", -3, 3)
 	k.Set(0)
 	from, to := litRange(k)
 	if from != 0 || to != 0 {
@@ -143,14 +143,14 @@ func TestLitRangeCentered(t *testing.T) {
 		t.Errorf("litRange at -2 = [%v %v], want [-90 0]", from, to)
 	}
 	// pan at C
-	p := NewKnob(KnobPan, "PAN", 0, 127)
-	p.Set(64)
+	p := NewKnob(KnobPan, "PAN", "patch/temp/common/pan", -63, 63)
+	p.Set(0)
 	from, to = litRange(p)
 	if from != 0 || to != 0 {
 		t.Errorf("pan litRange at C = [%v %v], want [0 0]", from, to)
 	}
 	// min-max knob: lit range always starts at the left end
-	m := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	m := NewKnob(KnobMinMax, "LEVEL", "patch/temp/common/level", 0, 127)
 	m.Set(64)
 	from, to = litRange(m)
 	if from != MinAngle {
@@ -161,13 +161,13 @@ func TestLitRangeCentered(t *testing.T) {
 func TestCenterTickOnlyForCenteredStyles(t *testing.T) {
 	// at minimum, a min-max knob must have an empty lit range (no green
 	// tick at 12 o'clock); bipolar/pan at center get the 12 o'clock tick
-	m := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	m := NewKnob(KnobMinMax, "LEVEL", "patch/temp/common/level", 0, 127)
 	m.Set(0)
 	from, to := litRange(m)
 	if from != MinAngle || to != MinAngle {
 		t.Errorf("minmax litRange at 0 = [%v %v], want [%v %v] (empty)", from, to, MinAngle, MinAngle)
 	}
-	b := NewKnob(KnobBipolar, "OCTAVE", -3, 3)
+	b := NewKnob(KnobBipolar, "OCTAVE", "patch/temp/common/octave", -3, 3)
 	b.Set(0)
 	from, to = litRange(b)
 	if from != 0 || to != 0 {
@@ -176,7 +176,7 @@ func TestCenterTickOnlyForCenteredStyles(t *testing.T) {
 }
 
 func TestKnobSetReportsChange(t *testing.T) {
-	k := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	k := NewKnob(KnobMinMax, "LEVEL", "patch/temp/common/level", 0, 127)
 	var got []int
 	k.OnChange = func(v int) { got = append(got, v) }
 	k.set(5)

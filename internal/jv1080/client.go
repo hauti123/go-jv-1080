@@ -2,6 +2,9 @@ package jv1080
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"go-jv-1080/internal/midi"
@@ -21,12 +24,20 @@ type Client struct {
 	dev      *midi.Device
 	deviceID uint8
 	timeout  time.Duration
+
+	mu       sync.Mutex
+	paramCbs map[*func(string, any)]struct{}
+	attached bool
 }
 
 // NewClient returns a client talking to the device with the given device
-// ID (0x10 = factory default, unit 17).
+// ID (0x10 = factory default, unit 17). The client listens on the device
+// for unsolicited parameter changes (see OnParameterChange).
 func NewClient(dev *midi.Device, deviceID uint8) *Client {
-	return &Client{dev: dev, deviceID: deviceID, timeout: DefaultTimeout}
+	c := &Client{dev: dev, deviceID: deviceID, timeout: DefaultTimeout, paramCbs: map[*func(string, any)]struct{}{}}
+	dev.RegisterCallback(c.handleDeviceMessage)
+	c.attached = true
+	return c
 }
 
 // SetTimeout sets the timeout for data requests.
@@ -352,6 +363,129 @@ func (c *Client) SetPerformanceParameter(number int, block string, part int, off
 		return fmt.Errorf("jv1080: unknown performance block %q", block)
 	}
 	return c.sendDataSet(addr, value)
+}
+
+// SetParameter writes a single parameter addressed by its path-like key
+// (e.g. "patch/temp/common/level") to the device. The value is given as
+// entered in the UI (int for raw/bipolar parameters, "C"/"L13"/"R13" or
+// int for pan, string for the name); the conversion to wire bytes happens
+// in this package. Only single-byte parameters (and the name) are
+// supported through keys for now.
+func (c *Client) SetParameter(key string, value any) error {
+	p, err := resolveParam(key)
+	if err != nil {
+		return err
+	}
+	data, err := p.EncodeValue(value)
+	if err != nil {
+		return err
+	}
+	return c.sendDataSet(p.area, data)
+}
+
+// GetParameter reads a single parameter addressed by its path-like key and
+// returns its value as entered in the UI (int, or pan/name string).
+func (c *Client) GetParameter(key string) (any, error) {
+	p, err := resolveParam(key)
+	if err != nil {
+		return nil, err
+	}
+	size := 1
+	if p.Key == "patch/temp/common/name" {
+		size = 12
+	}
+	ds, err := c.request(p.area, size)
+	if err != nil {
+		return nil, err
+	}
+	return p.DecodeValue(ds.Data)
+}
+
+// ParamKeys returns the path-like keys of all parameters known to the key
+// system (for now only the temporary patch).
+func ParamKeys() []string {
+	keys := make([]string, 0, len(tempPatchParams))
+	for _, spec := range tempPatchParams {
+		block := spec.block
+		if strings.HasPrefix(block, "tone/") {
+			keys = append(keys, "patch/temp/tone/"+strings.TrimPrefix(block, "tone/")+"/"+spec.name)
+		} else {
+			keys = append(keys, "patch/temp/"+block+"/"+spec.name)
+		}
+	}
+	return keys
+}
+
+// OnParameterChange registers a callback that is invoked with the
+// path-like key and the UI value whenever the device sends an unsolicited
+// DT1 for a known parameter of the temporary patch (e.g. changed on the
+// front panel). It returns a function that unregisters the callback.
+func (c *Client) OnParameterChange(cb func(key string, value any)) (unregister func()) {
+	c.mu.Lock()
+	if c.paramCbs == nil {
+		c.paramCbs = map[*func(string, any)]struct{}{}
+	}
+	c.paramCbs[&cb] = struct{}{}
+	c.mu.Unlock()
+	return func() {
+		c.mu.Lock()
+		delete(c.paramCbs, &cb)
+		c.mu.Unlock()
+	}
+}
+
+// handleDeviceMessage decodes unsolicited DT1 messages for known
+// temporary-patch parameters and dispatches them to OnParameterChange
+// callbacks. It is registered on the MIDI device by NewClient.
+func (c *Client) handleDeviceMessage(raw []byte) {
+	ds, err := message.ParseDataSet(raw)
+	if err != nil || len(ds.Data) == 0 {
+		return
+	}
+	base := TemporaryPatchArea()
+	off := ds.Address.Addr() - base.Addr()
+	if off < 0 {
+		return
+	}
+	key, ok := tempPatchKeyAt(off)
+	if !ok {
+		return
+	}
+	p, _ := resolveParam(key)
+	val, err := p.DecodeValue(ds.Data)
+	if err != nil {
+		return
+	}
+	c.mu.Lock()
+	cbs := make([]func(string, any), 0, len(c.paramCbs))
+	for cb := range c.paramCbs {
+		cbs = append(cbs, *cb)
+	}
+	c.mu.Unlock()
+	for _, cb := range cbs {
+		cb(key, val)
+	}
+}
+
+// tempPatchKeyAt maps an offset relative to the temporary patch area to a
+// parameter key, if a known parameter starts exactly at that offset.
+func tempPatchKeyAt(off int) (string, bool) {
+	for _, spec := range tempPatchParams {
+		start := spec.offset
+		key := "patch/temp/" + spec.block + "/" + spec.name
+		if spec.block != "common" {
+			t, err := strconv.Atoi(strings.TrimPrefix(spec.block, "tone/"))
+			if err != nil || t < 1 || t > 4 {
+				continue
+			}
+			start = (0x10+2*(t-1))*0x80 + spec.offset
+			key = "patch/temp/tone/" + strings.TrimPrefix(spec.block, "tone/") + "/" + spec.name
+		}
+		if off == start {
+			return key, true
+		}
+	}
+	return "", false
 }
 
 // NoteOn sends a note on message.
