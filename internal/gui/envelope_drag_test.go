@@ -75,8 +75,8 @@ func TestPressDragSequence(t *testing.T) {
 	p2before := e.points[2].X
 	e.dragTo(1, f32.Pt(press.X+60, press.Y-30), iw, ih)
 	wantX := before.X + 60/iw
-	if wantX > p2before-envGap {
-		wantX = p2before - envGap // clamped at the next point (before the shift)
+	if wantX > p2before {
+		wantX = p2before // clamped at the next point (segments may be 0)
 	}
 	wantY := before.Y + 30/ih
 	if d := e.points[1].X - wantX; d < -1e-4 || d > 1e-4 {
@@ -169,5 +169,35 @@ func TestDragMathRegression(t *testing.T) {
 	}
 	if e.points[1].X > e.points[2].X+1e-6 {
 		t.Errorf("x order violated: p1.X=%v > p2.X=%v", e.points[1].X, e.points[2].X)
+	}
+}
+
+// TestPerHandleDrag simulates pressing exactly on each handle's pixel
+// position and dragging: y-drag must change the level, x-drag must move
+// the point and shift the following points along.
+func TestPerHandleDrag(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	iw, ih := float32(300), float32(100)
+	padX, padT := float32(8), float32(8)
+	for _, i := range []int{0, 1, 2, 3} {
+		e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+		p := e.points[i]
+		press := f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
+		e.beginDrag(i, 1, press)
+		e.dragTo(i, f32.Pt(press.X, press.Y-30), iw, ih) // 30px up
+		if e.points[i].Y <= p.Y {
+			t.Errorf("handle %d: y-drag failed (before %v after %v)", i, p.Y, e.points[i].Y)
+		}
+		e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+		p = e.points[i]
+		press = f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
+		e.beginDrag(i, 1, press)
+		e.dragTo(i, f32.Pt(press.X+30, press.Y), iw, ih) // 30px right
+		if e.points[i].X <= p.X {
+			t.Errorf("handle %d: x-drag failed (before %v after %v)", i, p.X, e.points[i].X)
+		}
+		if i < 3 && e.points[i+1].X <= p.X {
+			t.Errorf("handle %d: following point did not shift along", i)
+		}
 	}
 }

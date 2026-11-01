@@ -20,6 +20,8 @@ import (
 //
 // Interaction (same as gui-proto): drag the points freely in x/y (x order
 // is preserved), double-click a point resets it to its default.
+type envTag struct{ i int }
+
 type Envelope struct {
 	Title string // mandatory, written below the screen
 
@@ -35,6 +37,7 @@ type Envelope struct {
 
 	points   [4]f32.Point // x: cumulative time 0..1 (= sum t1..ti over 4*127), y: level 0..1 (-63..+63)
 	defaults [4]f32.Point
+	tags     [4]envTag
 	active   int
 
 	dragging  bool
@@ -45,7 +48,6 @@ type Envelope struct {
 }
 
 const (
-	envGap  = 0.03 // min distance between neighbouring points
 	envMinX = 0.02
 	envMaxX = 0.98
 )
@@ -65,6 +67,9 @@ func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
 		{X: 0.96, Y: 0.0}, // release end
 	}
 	e.points = e.defaults
+	for i := range e.tags {
+		e.tags[i] = envTag{i: i}
+	}
 	return e
 }
 
@@ -149,9 +154,8 @@ func clampf01(v float32) float32 {
 }
 
 func (e *Envelope) clampPoint(i int) {
-	// x is cumulative over envMaxTime; keep a minimum segment (envGap of
-	// the total span) to each neighbour and stay on screen
-	gap := float32(envGap)
+	// x is cumulative over envMaxTime; keep the point on screen and in
+	// order (segments may be 0)
 	prev := float32(envMinX)
 	if i > 0 {
 		prev = e.points[i-1].X
@@ -160,7 +164,7 @@ func (e *Envelope) clampPoint(i int) {
 	if i < len(e.points)-1 {
 		next = e.points[i+1].X
 	}
-	e.points[i].X = clampf(e.points[i].X, prev+gap, next-gap)
+	e.points[i].X = clampf(e.points[i].X, prev, next)
 	e.points[i].X = clampf(e.points[i].X, envMinX, envMaxX)
 	e.points[i].Y = clampf(e.points[i].Y, 0, 1)
 }
@@ -227,51 +231,51 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	// Origin marker.
 	fillRect(gtx, padX-3, baseY-3, 6, 6, rgb(0x2F7F3A))
 
-	// One tag for the whole screen: hit-test the press against the
-	// handles, then grab the pointer on this tag so all following
-	// Drag events come back to us.
-	screen := clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops)
-	event.Op(gtx.Ops, e)
-	screen.Pop()
-
-	for {
-		ev, ok := gtx.Event(pointer.Filter{
-			Target: e,
-			Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
-		})
-		if !ok {
-			break
-		}
-		pe, ok := ev.(pointer.Event)
-		if !ok {
-			continue
-		}
-		switch pe.Kind {
-		case pointer.Press:
-			if pe.Buttons != pointer.ButtonPrimary {
+	// One tag per handle (hit area 14 px around the point, like the
+	// proto), declared before the event drain. A press on a handle grabs
+	// the pointer on that handle's tag, so all following Drag events are
+	// delivered to exactly that handle.
+	for i := range e.points {
+		p := px(e.points[i])
+		cs := clip.Rect{
+			Min: image.Pt(int(p.X-14), int(p.Y-14)),
+			Max: image.Pt(int(p.X+14), int(p.Y+14)),
+		}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &e.tags[i])
+		cs.Pop()
+	}
+	for i := range e.points {
+		tag := &e.tags[i]
+		for {
+			ev, ok := gtx.Event(pointer.Filter{
+				Target: tag,
+				Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
+			})
+			if !ok {
+				break
+			}
+			pe, ok := ev.(pointer.Event)
+			if !ok {
 				continue
 			}
-			// pick the nearest handle (hit radius 16 px like the visuals)
-			best, bestD := 0, float32(1<<30)
-			for i := range e.points {
-				p := px(e.points[i])
-				d := (pe.Position.X-p.X)*(pe.Position.X-p.X) + (pe.Position.Y-p.Y)*(pe.Position.Y-p.Y)
-				if d < bestD {
-					best, bestD = i, d
+			switch pe.Kind {
+			case pointer.Press:
+				if pe.Buttons != pointer.ButtonPrimary {
+					continue
 				}
-			}
-			e.beginDrag(best, pe.PointerID, pe.Position)
-			gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
-			e.active = best
-		case pointer.Drag:
-			if !e.dragging || pe.PointerID != e.pointerID {
-				continue
-			}
-			e.dragTo(e.dragIdx, pe.Position, iw, ih)
-			e.emit(e.dragIdx)
-		case pointer.Release, pointer.Cancel:
-			if pe.PointerID == e.pointerID {
-				e.dragging = false
+				e.beginDrag(i, pe.PointerID, pe.Position)
+				gtx.Execute(pointer.GrabCmd{Tag: tag, ID: pe.PointerID})
+				e.active = i
+			case pointer.Drag:
+				if !e.dragging || e.dragIdx != i || pe.PointerID != e.pointerID {
+					continue
+				}
+				e.dragTo(i, pe.Position, iw, ih)
+				e.emit(i)
+			case pointer.Release, pointer.Cancel:
+				if e.dragging && e.dragIdx == i && pe.PointerID == e.pointerID {
+					e.dragging = false
+				}
 			}
 		}
 	}
@@ -323,15 +327,16 @@ func (e *Envelope) dragTo(i int, pos f32.Point, iw, ih float32) {
 	}
 	newX := e.startVal.X + (pos.X-e.start.X)/iw
 	newY := e.startVal.Y - (pos.Y-e.start.Y)/ih
-	// clamp x into the allowed band, then shift the following points by
-	// the same delta so their segments stay unchanged
+	// clamp x so the point stays on screen and does not cross its
+	// neighbours (segments may shrink to 0), then shift the following
+	// points by the same delta so their segments keep their length
 	lo := float32(envMinX)
 	if i > 0 {
-		lo = e.points[i-1].X + envGap
+		lo = e.points[i-1].X
 	}
 	hi := float32(envMaxX)
 	if i < len(e.points)-1 {
-		hi = e.points[i+1].X - envGap
+		hi = e.points[i+1].X
 	}
 	newX = clampf(newX, lo, hi)
 	newX = clampf(newX, envMinX, envMaxX)
