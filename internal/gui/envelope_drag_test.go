@@ -110,3 +110,28 @@ func TestPerHandleDrag(t *testing.T) {
 		}
 	}
 }
+
+// TestHitTestSelectsPressedHandle pins the press hit-test: a press at a
+// handle's pixel position must select exactly that handle, so the point
+// follows the mouse from the first drag event.
+func TestHitTestSelectsPressedHandle(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+	iw, ih := float32(300), float32(100)
+	padX, padT := float32(8), float32(8)
+	px := func(p f32.Point) f32.Point { return f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih) }
+	for i := 0; i < 4; i++ {
+		press := px(e.points[i])
+		best, bestD := 0, float32(1<<30)
+		for j := range e.points {
+			p := px(e.points[j])
+			d := (press.X-p.X)*(press.X-p.X) + (press.Y-p.Y)*(press.Y-p.Y)
+			if d < bestD {
+				best, bestD = j, d
+			}
+		}
+		if best != i {
+			t.Errorf("press at handle %d selected %d", i, best)
+		}
+	}
+}

@@ -20,8 +20,6 @@ import (
 //
 // Interaction (same as gui-proto): drag the points freely in x/y (x order
 // is preserved), double-click a point resets it to its default.
-type envTag struct{ i int }
-
 type Envelope struct {
 	Title string // mandatory, written below the screen
 
@@ -41,7 +39,6 @@ type Envelope struct {
 	levels   [4]int
 	points   [4]f32.Point // x: cumulative time 0..1 (= sum t1..ti over 4*127), y: level 0..1 (-63..+63)
 	defaults [4]f32.Point
-	tags     [4]envTag
 	active   int
 
 	dragging    bool
@@ -69,9 +66,6 @@ func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
 	e.levels = [4]int{63, 19, 19, -63}
 	e.relayout()
 	e.defaults = e.points
-	for i := range e.tags {
-		e.tags[i] = envTag{i: i}
-	}
 	return e
 }
 
@@ -202,54 +196,56 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	// Origin marker.
 	fillRect(gtx, padX-3, baseY-3, 6, 6, rgb(0x2F7F3A))
 
-	// One tag per handle (hit area 14 px around the point, like the
-	// proto), declared before the event drain. A press on a handle grabs
-	// the pointer on that handle's tag, so all following Drag events are
-	// delivered to exactly that handle.
-	for i := range e.points {
-		p := px(e.points[i])
-		cs := clip.Rect{
-			Min: image.Pt(int(p.X-14), int(p.Y-14)),
-			Max: image.Pt(int(p.X+14), int(p.Y+14)),
-		}.Push(gtx.Ops)
-		event.Op(gtx.Ops, &e.tags[i])
-		cs.Pop()
-	}
-	for i := range e.points {
-		tag := &e.tags[i]
-		for {
-			ev, ok := gtx.Event(pointer.Filter{
-				Target: tag,
-				Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
-			})
-			if !ok {
-				break
-			}
-			pe, ok := ev.(pointer.Event)
-			if !ok {
+	// One tag for the whole screen, declared over the full area. All
+	// events (press/drag/release) are received on this single tag, whose
+	// coordinate system is the envelope's own, so pe.Position is directly
+	// comparable with the handle positions.
+	screen := clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops)
+	event.Op(gtx.Ops, e)
+	screen.Pop()
+
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: e,
+			Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		switch pe.Kind {
+		case pointer.Press:
+			if pe.Buttons != pointer.ButtonPrimary {
 				continue
 			}
-			switch pe.Kind {
-			case pointer.Press:
-				if pe.Buttons != pointer.ButtonPrimary {
-					continue
+			// pick the nearest handle
+			best, bestD := 0, float32(1<<30)
+			for i := range e.points {
+				p := px(e.points[i])
+				d := (pe.Position.X-p.X)*(pe.Position.X-p.X) + (pe.Position.Y-p.Y)*(pe.Position.Y-p.Y)
+				if d < bestD {
+					best, bestD = i, d
 				}
-				e.beginDrag(i, pe.PointerID, pe.Position)
-				gtx.Execute(pointer.GrabCmd{Tag: tag, ID: pe.PointerID})
-				e.active = i
-			case pointer.Drag:
-				if !e.dragging || e.dragIdx != i || pe.PointerID != e.pointerID {
-					continue
-				}
-				e.dragTo(i, pe.Position, iw, ih)
-				e.emit(i)
-			case pointer.Release, pointer.Cancel:
-				if e.dragging && e.dragIdx == i && pe.PointerID == e.pointerID {
-					e.dragging = false
-				}
+			}
+			e.beginDrag(best, pe.PointerID, pe.Position)
+			gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
+			e.active = best
+		case pointer.Drag:
+			if !e.dragging || pe.PointerID != e.pointerID {
+				continue
+			}
+			e.dragTo(e.dragIdx, pe.Position, iw, ih)
+			e.emit(e.dragIdx)
+		case pointer.Release, pointer.Cancel:
+			if pe.PointerID == e.pointerID {
+				e.dragging = false
 			}
 		}
 	}
+
 	// Handle visuals.
 	for i := range e.points {
 		p := px(e.points[i])
