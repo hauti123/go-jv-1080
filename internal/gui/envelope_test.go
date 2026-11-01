@@ -35,7 +35,7 @@ func TestEnvelopeXOrderPreserved(t *testing.T) {
 		}
 	}
 	// and the relative times decode to the clamped segments
-	got := e.times()
+	got := e.times
 	if got[0] != 100 || got[1] != 10 {
 		t.Errorf("times() = %v, want first segments [100 10 ...]", got)
 	}

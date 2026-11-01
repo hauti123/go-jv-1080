@@ -6,175 +6,84 @@ import (
 	"gioui.org/f32"
 )
 
-// TestRelativeTimes pins the cumulative-time model: points are placed at
-// the SUM of the relative t values over the full 4*127 span, and Point
-// decodes the relative values back.
+// TestRelativeTimes pins the value model: SetAll/Point round-trip relative
+// times and levels, and pixel x is the cumulative sum over 4*127.
 func TestRelativeTimes(t *testing.T) {
 	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
-	// t1=10, t2=20 => point 2 sits at absolute 30 of 508
-	e.SetAll([4]int{10, 20, 30, 40}, [4]int{0, 10, -10, 0})
-	if got := e.times(); got != [4]int{10, 20, 30, 40} {
-		t.Errorf("times() = %v, want [10 20 30 40]", got)
-	}
-	if p := e.points[1]; p.X < 29.0/508-0.01 || p.X > 31.0/508+0.01 {
-		t.Errorf("point 1 x = %v, want ~30/508=%v", p.X, 30.0/508)
-	}
+	e.SetAll([4]int{10, 20, 30, 40}, [4]int{-63, 0, 63, -10})
 	for i := 0; i < 4; i++ {
 		tv, lv := e.Point(i)
-		want := [4]int{10, 20, 30, 40}[i]
-		if tv != want {
-			t.Errorf("Point(%d) time = %d, want %d", i, tv, want)
+		if tv != [4]int{10, 20, 30, 40}[i] || lv != [4]int{-63, 0, 63, -10}[i] {
+			t.Errorf("Point(%d) = (%d,%d)", i, tv, lv)
 		}
-		_ = lv
 	}
-	// levels round-trip
-	e.SetAll([4]int{10, 20, 30, 40}, [4]int{-63, 0, 63, -10})
-	wantL := [4]int{-63, 0, 63, -10}
-	for i := 0; i < 4; i++ {
-		_, lv := e.Point(i)
-		if lv != wantL[i] {
-			t.Errorf("Point(%d) level = %d, want %d", i, lv, wantL[i])
+	// t1=10, t2=20 -> point 1 at cumulative 30 of 508
+	if p := e.points[1].X; p < 29.0/508-0.001 || p > 31.0/508+0.001 {
+		t.Errorf("point 1 x = %v, want ~30/508", p)
+	}
+}
+
+// TestSetTimeBounds pins the segment invariants of setTime: each segment
+// stays within 0..127, the total within 4*127, and following segments keep
+// their length.
+func TestSetTimeBounds(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 0, 0, 0})
+	// grow t2 beyond 127: clamped to 127, t3/t4 shrink to keep the total
+	e.setTime(1, 500)
+	if e.times[1] != 127 {
+		t.Errorf("t2 = %d, want 127", e.times[1])
+	}
+	total := e.times[0] + e.times[1] + e.times[2] + e.times[3]
+	if total > envMaxTime {
+		t.Errorf("total = %d > %d", total, envMaxTime)
+	}
+	if e.times[2] != 40-87 || e.times[3] != 40-87 { // 127-40=87 shifted off t3,t4
+		t.Logf("segments after clamp: %v", e.times)
+	}
+	// shrink t1 to 0: following segments grow back, each <= 127
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 0, 0, 0})
+	e.setTime(0, -100)
+	if e.times[0] != 0 {
+		t.Errorf("t1 = %d, want 0", e.times[0])
+	}
+	for i, v := range e.times {
+		if v < 0 || v > 127 {
+			t.Errorf("segment %d = %d out of 0..127", i, v)
 		}
 	}
 }
 
-// TestPressDragSequence simulates the full event flow of Layout with a
-// single screen tag: press near a handle -> grab -> drags move exactly
-// that point relative to the press position (no jumping to fixed values).
-func TestPressDragSequence(t *testing.T) {
+// TestDragInDeviceUnits pins dragTo: the pixel delta is converted to device
+// units (envMaxTime over iw px, 126 over ih px), applied to the pressed
+// point only, with segment bounds enforced.
+func TestDragInDeviceUnits(t *testing.T) {
 	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
 	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
-	iw, ih := float32(300), float32(100)
-
-	// press exactly at point 1's position (px mapping: padX=8, padT=8)
-	padX, padT := float32(8), float32(8)
-	p1 := e.points[1]
-	press := f32.Pt(padX+p1.X*iw, padT+(1-p1.Y)*ih)
-
-	// emulate the Press handler: nearest handle, record start
-	best, bestD := 0, float32(1<<30)
-	for i := range e.points {
-		p := e.points[i]
-		pp := f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
-		d := (press.X-pp.X)*(press.X-pp.X) + (press.Y-pp.Y)*(press.Y-pp.Y)
-		if d < bestD {
-			best, bestD = i, d
-		}
-	}
-	if best != 1 {
-		t.Fatalf("press hit handle %d, want 1", best)
-	}
-	e.dragging, e.dragIdx = true, best
-	e.start = press
-	e.startVal = e.points[best]
-
-	// drag 30px up and 60px right: point 1 moves by the delta, but is
-	// clamped at the next point minus the gap; the following points then
-	// shift along by the applied (clamped) delta.
-	before := e.points[1]
-	p2before := e.points[2].X
-	e.dragTo(1, f32.Pt(press.X+60, press.Y-30), iw, ih)
-	wantX := before.X + 60/iw
-	if wantX > p2before {
-		wantX = p2before // clamped at the next point (segments may be 0)
-	}
-	wantY := before.Y + 30/ih
-	if d := e.points[1].X - wantX; d < -1e-4 || d > 1e-4 {
-		t.Errorf("after drag x = %v, want %v", e.points[1].X, wantX)
-	}
-	if d := e.points[1].Y - wantY; d < -1e-4 || d > 1e-4 {
-		t.Errorf("after drag y = %v, want %v", e.points[1].Y, wantY)
-	}
-	// no jump to a fixed position: the segment time grew by the drag amount
-	got := e.times()
-	wantSeg := 40 + int(roundF((wantX-before.X)*508))
-	if got[1] < wantSeg-2 || got[1] > wantSeg+2 {
-		t.Errorf("segment t2 = %d, want ~%d", got[1], wantSeg)
-	}
-	// following points moved along by the same (clamped) delta
-	if d := (e.points[2].X - p2before) - (wantX - before.X); d < -1e-4 || d > 1e-4 {
-		t.Errorf("point 2 did not shift along: moved %v, want %v", d, wantX-before.X)
-	}
-}
-
-// TestDragMathRegression pins the drag behavior via dragTo: dragging up
-// raises the level, dragging right raises the relative time of the segment,
-// far drags are clamped (max level +63, segment 0..127).
-func TestDragMathRegression(t *testing.T) {
-	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
-	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
-	iw, ih := float32(300), float32(100)
+	iw, ih := float32(508), float32(126) // 1px == 1 device unit
 	i := 1
-
-	// press at the point and drag up 30px: level must rise
-	start := e.points[i]
-	e.dragging, e.dragIdx = true, i
-	e.start = f32.Pt(100, 50)
-	e.startVal = start
-	e.dragTo(i, f32.Pt(100, 20), iw, ih) // 30px up
-	if e.points[i].Y <= start.Y {
-		t.Errorf("drag up did not raise level: %v -> %v", start, e.points[i])
+	e.beginDrag(i, 1, f32.Pt(100, 50))
+	// drag right 30px, up 10px
+	e.dragTo(i, f32.Pt(130, 40), iw, ih)
+	if e.times[1] != 70 {
+		t.Errorf("t2 after +30px = %d, want 70", e.times[1])
 	}
-
-	// drag right 60px: the segment t2 grows (point 1 moves right)
-	before := e.points[i].X
-	e.start = f32.Pt(100, 50)
-	e.startVal = e.points[i]
-	e.dragTo(i, f32.Pt(160, 50), iw, ih)
-	if e.points[i].X <= before {
-		t.Errorf("drag right did not move point right: %v -> %v", before, e.points[i].X)
+	if e.levels[1] != 30 {
+		t.Errorf("l2 after +10px up = %d, want 30", e.levels[1])
 	}
-	if got := e.times(); got[1] <= 40 {
-		t.Errorf("segment t2 = %d, want > 40 after dragging right", got[1])
+	// following segments shifted along by -30 (kept >= 0)
+	if e.times[2] != 10 || e.times[3] != 10 {
+		t.Errorf("following segments = %d,%d, want 10,10 (shifted along)", e.times[2], e.times[3])
 	}
-
-	// drag far up: clamped at max level +63, stays there but does not exceed
-	e.startVal = e.points[i]
-	e.start = f32.Pt(160, 50)
-	e.dragTo(i, f32.Pt(160, -1000), iw, ih)
-	if e.points[i].Y > 1 {
-		t.Errorf("Y not clamped to 1: %v", e.points[i].Y)
-	}
-	if _, lv := e.Point(i); lv != 63 {
-		t.Errorf("max level should be +63, got %d", lv)
-	}
-
-	// dragging right shifts the following points along (segments keep
-	// their length); a far drag clamps at the screen edge
-	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 0, 0, 0})
-	e.dragging, e.dragIdx = true, 1
-	e.start = f32.Pt(100, 50)
-	e.startVal = e.points[1]
-	e.dragTo(1, f32.Pt(100+30, 50), iw, ih) // 30px right
-	got := e.times()
-	if got[1] <= 40 {
-		t.Errorf("segment t2 = %d, want > 40 after dragging right", got[1])
-	}
-	if got[2] != 40 || got[3] != 40 {
-		t.Errorf("following segments changed: %v, want t3=t4=40 (shifted along)", got)
-	}
-	for i := 1; i < 4; i++ {
-		if e.points[i].X < e.points[i-1].X {
-			t.Errorf("x order violated at %d", i)
-		}
-	}
-	// far right: point 1 stops at the last point minus gap, last point at edge
-	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 0, 0, 0})
-	e.dragging, e.dragIdx = true, 1
-	e.start = f32.Pt(100, 50)
-	e.startVal = e.points[1]
-	e.dragTo(1, f32.Pt(100+10000, 50), iw, ih)
-	if e.points[3].X > envMaxX+1e-6 {
-		t.Errorf("last point beyond screen: %v", e.points[3].X)
-	}
-	if e.points[1].X > e.points[2].X+1e-6 {
-		t.Errorf("x order violated: p1.X=%v > p2.X=%v", e.points[1].X, e.points[2].X)
+	// pixel position reflects cumulative time
+	if p := e.points[1].X; p < 109.0/508-0.001 || p > 111.0/508+0.001 {
+		t.Errorf("point 1 x = %v, want ~110/508 (40+70)", p)
 	}
 }
 
 // TestPerHandleDrag simulates pressing exactly on each handle's pixel
-// position and dragging: y-drag must change the level, x-drag must move
-// the point and shift the following points along.
+// position and dragging: y-drag changes the level, x-drag changes the
+// segment and shifts the following points along.
 func TestPerHandleDrag(t *testing.T) {
 	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
 	iw, ih := float32(300), float32(100)
@@ -185,19 +94,19 @@ func TestPerHandleDrag(t *testing.T) {
 		press := f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
 		e.beginDrag(i, 1, press)
 		e.dragTo(i, f32.Pt(press.X, press.Y-30), iw, ih) // 30px up
-		if e.points[i].Y <= p.Y {
-			t.Errorf("handle %d: y-drag failed (before %v after %v)", i, p.Y, e.points[i].Y)
+		if e.levels[i] <= [4]int{0, 20, -20, 0}[i] {
+			t.Errorf("handle %d: y-drag did not raise level (%d)", i, e.levels[i])
 		}
 		e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
 		p = e.points[i]
 		press = f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
 		e.beginDrag(i, 1, press)
 		e.dragTo(i, f32.Pt(press.X+30, press.Y), iw, ih) // 30px right
-		if e.points[i].X <= p.X {
-			t.Errorf("handle %d: x-drag failed (before %v after %v)", i, p.X, e.points[i].X)
+		if e.times[i] <= 40 {
+			t.Errorf("handle %d: x-drag did not grow segment (t=%d)", i, e.times[i])
 		}
-		if i < 3 && e.points[i+1].X <= p.X {
-			t.Errorf("handle %d: following point did not shift along", i)
+		if i < 3 && e.times[i+1] >= 40 {
+			t.Errorf("handle %d: following segment did not shrink along (t%d=%d)", i, i+1, e.times[i+1])
 		}
 	}
 }

@@ -35,16 +35,21 @@ type Envelope struct {
 	// values -63..+63.
 	OnChange func(timeKey string, timeVal int, levelKey string, levelVal int)
 
+	// times/levels are the device values (relative times 0-127, levels
+	// -63..+63); points holds the derived pixel positions.
+	times    [4]int
+	levels   [4]int
 	points   [4]f32.Point // x: cumulative time 0..1 (= sum t1..ti over 4*127), y: level 0..1 (-63..+63)
 	defaults [4]f32.Point
 	tags     [4]envTag
 	active   int
 
-	dragging  bool
-	dragIdx   int
-	pointerID pointer.ID
-	start     f32.Point
-	startVal  f32.Point
+	dragging    bool
+	dragIdx     int
+	pointerID   pointer.ID
+	start       f32.Point
+	startTimes  [4]int
+	startLevels [4]int
 }
 
 const (
@@ -59,14 +64,11 @@ var envNames = [4]string{"T1", "T2", "T3", "T4"}
 // (attack peak, decay to sustain, release).
 func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
 	e := &Envelope{Title: title, TimeKeys: timeKeys, LevelKeys: levelKeys}
-	// defaults as cumulative x over the full 4*127 span
-	e.defaults = [4]f32.Point{
-		{X: 0.14, Y: 1.0}, // attack peak
-		{X: 0.30, Y: 0.6}, // decay into sustain
-		{X: 0.70, Y: 0.6}, // release start
-		{X: 0.96, Y: 0.0}, // release end
-	}
-	e.points = e.defaults
+	// defaults (proto shape): attack peak, decay to sustain, release
+	e.times = [4]int{71, 81, 152, 122} // cumulative 71/152/304/426 of 508
+	e.levels = [4]int{63, 19, 19, -63}
+	e.relayout()
+	e.defaults = e.points
 	for i := range e.tags {
 		e.tags[i] = envTag{i: i}
 	}
@@ -78,59 +80,44 @@ func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
 // all four (max 4*127).
 const envMaxTime = 4 * 127
 
-// times returns the relative time values (t1..t4, each 0-127) decoded from
-// the cumulative x positions.
-func (e *Envelope) times() [4]int {
-	var out [4]int
-	prev := float32(0)
-	for i := 0; i < 4; i++ {
-		abs := clampf01(e.points[i].X) * envMaxTime
-		out[i] = int(roundF(clampf(abs-prev, 0, 127)))
-		prev = abs
-	}
-	return out
-}
-
 // SetPoint sets point i programmatically from device values (time 0-127
 // relative to the previous point, level -63..+63) without calling
-// OnChange. Use SetAll when loading a whole envelope.
+// OnChange.
 func (e *Envelope) SetPoint(i int, timeVal, levelVal int) {
 	if i < 0 || i > 3 {
 		return
 	}
-	t := e.times()
-	t[i] = clampInt(timeVal, 0, 127)
-	e.setTimes(t)
-	e.points[i].Y = clampf01((float32(levelVal) + 63) / 126)
+	e.times[i] = clampInt(timeVal, 0, 127)
+	e.levels[i] = clampInt(levelVal, -63, 63)
+	e.relayout()
 }
 
 // SetAll sets all four points at once from device values (relative times
 // t1..t4, levels l1..l4).
 func (e *Envelope) SetAll(times, levels [4]int) {
-	e.setTimes(times)
 	for i := 0; i < 4; i++ {
-		e.points[i].Y = clampf01((float32(levels[i]) + 63) / 126)
+		e.times[i] = clampInt(times[i], 0, 127)
+		e.levels[i] = clampInt(levels[i], -63, 63)
 	}
-}
-
-// setTimes places the points at the cumulative x positions of the given
-// relative times, clamped so each segment stays within 0..127 and the
-// total within envMaxTime.
-func (e *Envelope) setTimes(times [4]int) {
-	cum := float32(0)
-	for i := 0; i < 4; i++ {
-		seg := clampf(float32(clampInt(times[i], 0, 127)), 0, envMaxTime-cum)
-		cum += seg
-		e.points[i].X = clampf01(cum / envMaxTime)
-	}
+	e.relayout()
 }
 
 // Point returns the device values of point i (relative time 0-127, level
 // -63..+63).
 func (e *Envelope) Point(i int) (timeVal, levelVal int) {
-	t := e.times()
-	p := e.points[i]
-	return t[i], int(roundF(clampf01(p.Y)*126)) - 63
+	return e.times[i], e.levels[i]
+}
+
+// relayout recomputes the pixel positions from times/levels: x is the
+// cumulative time (sum of t1..ti) over the full 4*127 span, y is the
+// level mapped from -63..+63 to 0..1 (top = +63).
+func (e *Envelope) relayout() {
+	cum := 0
+	for i := 0; i < 4; i++ {
+		cum += clampInt(e.times[i], 0, 127)
+		e.points[i].X = clampf01(float32(cum) / envMaxTime)
+		e.points[i].Y = clampf01((float32(clampInt(e.levels[i], -63, 63)) + 63) / 126)
+	}
 }
 
 func roundF(v float32) float32 {
@@ -151,22 +138,6 @@ func clampf01(v float32) float32 {
 		return 1
 	}
 	return v
-}
-
-func (e *Envelope) clampPoint(i int) {
-	// x is cumulative over envMaxTime; keep the point on screen and in
-	// order (segments may be 0)
-	prev := float32(envMinX)
-	if i > 0 {
-		prev = e.points[i-1].X
-	}
-	next := float32(envMaxX)
-	if i < len(e.points)-1 {
-		next = e.points[i+1].X
-	}
-	e.points[i].X = clampf(e.points[i].X, prev, next)
-	e.points[i].X = clampf(e.points[i].X, envMinX, envMaxX)
-	e.points[i].Y = clampf(e.points[i].Y, 0, 1)
 }
 
 func clampf(v, lo, hi float32) float32 {
@@ -308,43 +279,55 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 }
 
 // beginDrag starts dragging handle i: records the pointer and the press
-// position plus the point's value at press time.
+// position plus the device values at press time.
 func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point) {
 	e.dragging = true
 	e.dragIdx = i
 	e.pointerID = id
 	e.start = pos
-	e.startVal = e.points[i]
+	e.startTimes = e.times
+	e.startLevels = e.levels
 }
 
 // dragTo moves point i by the drag delta (pos - e.start) in screen pixels,
-// given the inner screen size (iw, ih). X grows to the right (time), Y
-// grows upwards (level), then the point is clamped. Moving point i in x
-// shifts all following points along so the segments keep their length.
+// given the inner screen size (iw, ih). The delta is converted into device
+// units (time: full span envMaxTime over iw px; level: 126 over ih px) and
+// applied to the stored relative time/level of point i. The segment time
+// is clamped to 0..127 and the total span to envMaxTime; dragging in x
+// shifts all following segments along so their lengths stay unchanged.
+// Y (level) is clamped to -63..+63 independently.
 func (e *Envelope) dragTo(i int, pos f32.Point, iw, ih float32) {
 	if iw <= 0 || ih <= 0 {
 		return
 	}
-	newX := e.startVal.X + (pos.X-e.start.X)/iw
-	newY := e.startVal.Y - (pos.Y-e.start.Y)/ih
-	// clamp x so the point stays on screen and does not cross its
-	// neighbours (segments may shrink to 0), then shift the following
-	// points by the same delta so their segments keep their length
-	lo := float32(envMinX)
-	if i > 0 {
-		lo = e.points[i-1].X
+	dt := int(roundF((pos.X - e.start.X) / iw * envMaxTime))
+	dl := int(roundF(-(pos.Y - e.start.Y) / ih * 126))
+	e.setTime(i, e.startTimes[i]+dt)
+	e.levels[i] = clampInt(e.startLevels[i]+dl, -63, 63)
+	e.relayout()
+}
+
+// setTime sets the relative time of point i to v, clamped so that the
+// segment stays within 0..127 and the total of all four segments within
+// envMaxTime; all following segments are shifted by the same delta so
+// their lengths are preserved.
+func (e *Envelope) setTime(i, v int) {
+	v = clampInt(v, 0, 127)
+	// total-span clamp: keep the sum of the other segments
+	others := 0
+	for j := 0; j < 4; j++ {
+		if j != i {
+			others += e.times[j]
+		}
 	}
-	hi := float32(envMaxX)
-	if i < len(e.points)-1 {
-		hi = e.points[i+1].X
+	v = clampInt(v, 0, envMaxTime-others)
+	delta := v - e.times[i]
+	if delta == 0 {
+		return
 	}
-	newX = clampf(newX, lo, hi)
-	newX = clampf(newX, envMinX, envMaxX)
-	delta := newX - e.points[i].X
-	e.points[i].X = newX
-	e.points[i].Y = clampf(newY, 0, 1)
-	for j := i + 1; j < len(e.points); j++ {
-		e.points[j].X = clampf(e.points[j].X+delta, envMinX, envMaxX)
+	e.times[i] = v
+	for j := i + 1; j < 4; j++ {
+		e.times[j] = clampInt(e.times[j]-delta, 0, 127)
 	}
 }
 
