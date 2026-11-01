@@ -253,7 +253,7 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 			if pe.Buttons != pointer.ButtonPrimary {
 				continue
 			}
-			// pick the nearest handle
+			// pick the nearest handle (hit radius 16 px like the visuals)
 			best, bestD := 0, float32(1<<30)
 			for i := range e.points {
 				p := px(e.points[i])
@@ -262,16 +262,10 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 					best, bestD = i, d
 				}
 			}
-			if pe.Time-e.lastPress < dblClick && e.active == best {
-				e.points[best] = e.defaults[best] // double-click resets
-				e.clampPoint(best)
-				e.emit(best)
+			if pe.Time-e.lastPress < dblClick && e.active == best && !e.dragging {
+				e.resetPoint(best) // double-click resets
 			} else {
-				e.dragging = true
-				e.dragIdx = best
-				e.pointerID = pe.PointerID
-				e.start = pe.Position
-				e.startVal = e.points[best]
+				e.beginDrag(best, pe.PointerID, pe.Position)
 				gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
 			}
 			e.active = best
@@ -283,7 +277,9 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 			e.dragTo(e.dragIdx, pe.Position, iw, ih)
 			e.emit(e.dragIdx)
 		case pointer.Release, pointer.Cancel:
-			e.dragging = false
+			if pe.PointerID == e.pointerID {
+				e.dragging = false
+			}
 		}
 	}
 	// Handle visuals.
@@ -314,16 +310,51 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(w, total)}
 }
 
+// beginDrag starts dragging handle i: records the pointer and the press
+// position plus the point's value at press time.
+func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point) {
+	e.dragging = true
+	e.dragIdx = i
+	e.pointerID = id
+	e.start = pos
+	e.startVal = e.points[i]
+}
+
+// resetPoint restores point i to its default (double-click).
+func (e *Envelope) resetPoint(i int) {
+	e.points[i] = e.defaults[i]
+	e.clampPoint(i)
+	e.emit(i)
+}
+
 // dragTo moves point i by the drag delta (pos - e.start) in screen pixels,
 // given the inner screen size (iw, ih). X grows to the right (time), Y
-// grows upwards (level), then the point is clamped.
+// grows upwards (level), then the point is clamped. Moving point i in x
+// shifts all following points along so the segments keep their length.
 func (e *Envelope) dragTo(i int, pos f32.Point, iw, ih float32) {
 	if iw <= 0 || ih <= 0 {
 		return
 	}
-	e.points[i].X = e.startVal.X + (pos.X-e.start.X)/iw
-	e.points[i].Y = e.startVal.Y - (pos.Y-e.start.Y)/ih
-	e.clampPoint(i)
+	newX := e.startVal.X + (pos.X-e.start.X)/iw
+	newY := e.startVal.Y - (pos.Y-e.start.Y)/ih
+	// clamp x into the allowed band, then shift the following points by
+	// the same delta so their segments stay unchanged
+	lo := float32(envMinX)
+	if i > 0 {
+		lo = e.points[i-1].X + envGap
+	}
+	hi := float32(envMaxX)
+	if i < len(e.points)-1 {
+		hi = e.points[i+1].X - envGap
+	}
+	newX = clampf(newX, lo, hi)
+	newX = clampf(newX, envMinX, envMaxX)
+	delta := newX - e.points[i].X
+	e.points[i].X = newX
+	e.points[i].Y = clampf(newY, 0, 1)
+	for j := i + 1; j < len(e.points); j++ {
+		e.points[j].X = clampf(e.points[j].X+delta, envMinX, envMaxX)
+	}
 }
 
 // emit reports the current device values of point i through OnChange.

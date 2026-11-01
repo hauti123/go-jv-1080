@@ -68,14 +68,15 @@ func TestPressDragSequence(t *testing.T) {
 	e.start = press
 	e.startVal = e.points[best]
 
-	// drag 30px up and 60px right: point must move by exactly that delta,
-	// clamped only at the neighbour (point 2 at cum 120/508 = 0.236;
-	// unclamped target would be 0.357, so the clamp to 0.236-envGap applies)
+	// drag 30px up and 60px right: point 1 moves by the delta, but is
+	// clamped at the next point minus the gap; the following points then
+	// shift along by the applied (clamped) delta.
 	before := e.points[1]
+	p2before := e.points[2].X
 	e.dragTo(1, f32.Pt(press.X+60, press.Y-30), iw, ih)
 	wantX := before.X + 60/iw
-	if wantX > e.points[2].X-envGap {
-		wantX = e.points[2].X - envGap // clamped at the next point
+	if wantX > p2before-envGap {
+		wantX = p2before - envGap // clamped at the next point (before the shift)
 	}
 	wantY := before.Y + 30/ih
 	if d := e.points[1].X - wantX; d < -1e-4 || d > 1e-4 {
@@ -89,6 +90,10 @@ func TestPressDragSequence(t *testing.T) {
 	wantSeg := 40 + int(roundF((wantX-before.X)*508))
 	if got[1] < wantSeg-2 || got[1] > wantSeg+2 {
 		t.Errorf("segment t2 = %d, want ~%d", got[1], wantSeg)
+	}
+	// following points moved along by the same (clamped) delta
+	if d := (e.points[2].X - p2before) - (wantX - before.X); d < -1e-4 || d > 1e-4 {
+		t.Errorf("point 2 did not shift along: moved %v, want %v", d, wantX-before.X)
 	}
 }
 
@@ -134,15 +139,33 @@ func TestDragMathRegression(t *testing.T) {
 		t.Errorf("max level should be +63, got %d", lv)
 	}
 
-	// dragging right beyond the next point clamps the segment at the neighbour
+	// dragging right shifts the following points along (segments keep
+	// their length); a far drag clamps at the screen edge
 	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 0, 0, 0})
 	e.dragging, e.dragIdx = true, 1
 	e.start = f32.Pt(100, 50)
 	e.startVal = e.points[1]
-	e.dragTo(1, f32.Pt(100+10000, 50), iw, ih) // far right
+	e.dragTo(1, f32.Pt(100+30, 50), iw, ih) // 30px right
 	got := e.times()
-	if got[1] > 127 || got[2] < 0 {
-		t.Errorf("segments after far-right drag = %v, want t2<=127, t3>=0", got)
+	if got[1] <= 40 {
+		t.Errorf("segment t2 = %d, want > 40 after dragging right", got[1])
+	}
+	if got[2] != 40 || got[3] != 40 {
+		t.Errorf("following segments changed: %v, want t3=t4=40 (shifted along)", got)
+	}
+	for i := 1; i < 4; i++ {
+		if e.points[i].X < e.points[i-1].X {
+			t.Errorf("x order violated at %d", i)
+		}
+	}
+	// far right: point 1 stops at the last point minus gap, last point at edge
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 0, 0, 0})
+	e.dragging, e.dragIdx = true, 1
+	e.start = f32.Pt(100, 50)
+	e.startVal = e.points[1]
+	e.dragTo(1, f32.Pt(100+10000, 50), iw, ih)
+	if e.points[3].X > envMaxX+1e-6 {
+		t.Errorf("last point beyond screen: %v", e.points[3].X)
 	}
 	if e.points[1].X > e.points[2].X+1e-6 {
 		t.Errorf("x order violated: p1.X=%v > p2.X=%v", e.points[1].X, e.points[2].X)
