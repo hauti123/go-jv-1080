@@ -181,6 +181,51 @@ func TestTempPatchKeyAt(t *testing.T) {
 	}
 }
 
+func TestHandleDeviceMessageDispatch(t *testing.T) {
+	c := &Client{deviceID: 0x10}
+	var gotKey string
+	var gotVal any
+	c.OnParameterChange(func(key string, value any) { gotKey, gotVal = key, value })
+
+	// DT1 writing level (0x2E) of the temporary patch
+	ds := message.DataSet{DeviceID: 0x10, Address: message.Address{0x03, 0x00, 0x00, 0x2E}, Data: []byte{100}}
+	c.handleDeviceMessage(ds.Bytes())
+	if gotKey != "patch/temp/common/level" || gotVal.(int) != 100 {
+		t.Errorf("got %q %v, want patch/temp/common/level 100", gotKey, gotVal)
+	}
+
+	// DT1 for another device ID is ignored
+	gotKey = ""
+	ds.DeviceID = 0x11
+	c.handleDeviceMessage(ds.Bytes())
+	if gotKey != "" {
+		t.Errorf("foreign device ID produced update %q", gotKey)
+	}
+
+	// DT1 at an unknown offset is ignored
+	ds.DeviceID = 0x10
+	ds.Address = message.Address{0x03, 0x00, 0x00, 0x30}
+	c.handleDeviceMessage(ds.Bytes())
+	if gotKey != "" {
+		t.Errorf("unknown offset produced update %q", gotKey)
+	}
+
+	// non-sysex message is ignored
+	c.handleDeviceMessage([]byte{0x90, 0x3C, 0x40})
+	if gotKey != "" {
+		t.Errorf("note on produced update %q", gotKey)
+	}
+
+	// pan decode: wire 51 -> UI -13 (L13)
+	gotKey, gotVal = "", nil
+	ds.Address = message.Address{0x03, 0x00, 0x00, 0x2F}
+	ds.Data = []byte{51}
+	c.handleDeviceMessage(ds.Bytes())
+	if gotKey != "patch/temp/common/pan" || gotVal.(int) != -13 {
+		t.Errorf("pan: got %q %v, want patch/temp/common/pan -13", gotKey, gotVal)
+	}
+}
+
 func TestParamKeys(t *testing.T) {
 	keys := ParamKeys()
 	joined := strings.Join(keys, ",")

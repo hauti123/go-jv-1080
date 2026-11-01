@@ -82,6 +82,7 @@ func main() {
 	go func() {
 		w := new(app.Window)
 		w.Option(app.Title("JV-1080 Patch Common"), app.Size(unit.Dp(360), unit.Dp(220)))
+		ui.w = w
 		if err := ui.loop(w); err != nil {
 			log.Fatal(err)
 		}
@@ -103,6 +104,7 @@ type ui struct {
 	client  *jv1080.Client
 	status  string
 	updates chan paramUpdate
+	w       *app.Window // set once the window exists, for Invalidate
 }
 
 // paramUpdate is a device-originated parameter change, delivered to the
@@ -134,9 +136,14 @@ func (u *ui) setDevice(c *jv1080.Client) {
 	u.client = c
 	u.mu.Unlock()
 	c.OnParameterChange(func(key string, value any) {
+		// The MIDI receive callback runs on the driver's goroutine;
+		// hand the update to the GUI goroutine and wake it up.
 		select {
 		case u.updates <- paramUpdate{key: key, value: value}:
 		default:
+		}
+		if u.w != nil {
+			u.w.Invalidate()
 		}
 	})
 	for _, key := range []string{keyLevel, keyPan, keyOctave} {

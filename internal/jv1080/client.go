@@ -26,17 +26,15 @@ type Client struct {
 	timeout  time.Duration
 
 	mu       sync.Mutex
-	paramCbs map[*func(string, any)]struct{}
-	attached bool
+	paramCbs []func(key string, value any)
 }
 
 // NewClient returns a client talking to the device with the given device
 // ID (0x10 = factory default, unit 17). The client listens on the device
 // for unsolicited parameter changes (see OnParameterChange).
 func NewClient(dev *midi.Device, deviceID uint8) *Client {
-	c := &Client{dev: dev, deviceID: deviceID, timeout: DefaultTimeout, paramCbs: map[*func(string, any)]struct{}{}}
+	c := &Client{dev: dev, deviceID: deviceID, timeout: DefaultTimeout}
 	dev.RegisterCallback(c.handleDeviceMessage)
-	c.attached = true
 	return c
 }
 
@@ -422,14 +420,16 @@ func ParamKeys() []string {
 // front panel). It returns a function that unregisters the callback.
 func (c *Client) OnParameterChange(cb func(key string, value any)) (unregister func()) {
 	c.mu.Lock()
-	if c.paramCbs == nil {
-		c.paramCbs = map[*func(string, any)]struct{}{}
-	}
-	c.paramCbs[&cb] = struct{}{}
+	c.paramCbs = append(c.paramCbs, cb)
 	c.mu.Unlock()
 	return func() {
 		c.mu.Lock()
-		delete(c.paramCbs, &cb)
+		for i, u := range c.paramCbs {
+			if fmt.Sprintf("%p", u) == fmt.Sprintf("%p", cb) {
+				c.paramCbs = append(c.paramCbs[:i], c.paramCbs[i+1:]...)
+				break
+			}
+		}
 		c.mu.Unlock()
 	}
 }
@@ -440,6 +440,10 @@ func (c *Client) OnParameterChange(cb func(key string, value any)) (unregister f
 func (c *Client) handleDeviceMessage(raw []byte) {
 	ds, err := message.ParseDataSet(raw)
 	if err != nil || len(ds.Data) == 0 {
+		return
+	}
+	// Ignore messages for a different device ID.
+	if ds.DeviceID != c.deviceID {
 		return
 	}
 	base := TemporaryPatchArea()
@@ -457,10 +461,7 @@ func (c *Client) handleDeviceMessage(raw []byte) {
 		return
 	}
 	c.mu.Lock()
-	cbs := make([]func(string, any), 0, len(c.paramCbs))
-	for cb := range c.paramCbs {
-		cbs = append(cbs, *cb)
-	}
+	cbs := append([]func(string, any){}, c.paramCbs...)
 	c.mu.Unlock()
 	for _, cb := range cbs {
 		cb(key, val)
