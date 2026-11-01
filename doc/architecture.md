@@ -21,6 +21,8 @@ device parameter through a path-like key string (e.g.
 │  internal/gui (widgets)       │
 │  • Knob gadget (3 styles,     │
 │    each with a Key field)     │
+│  • Envelope editor (4 points, │
+│    TimeKeys/LevelKeys)        │
 │  • MK-II style drawing +      │
 │    5x7 LED font (gui-proto)   │
 │  • dark green MK-II theme     │
@@ -56,6 +58,8 @@ temporary patch is supported for now (`patch/user/N/...` comes later):
 - `patch/temp/common/pan` — UI value signed -63..+63 (0 = C), or `"C"`/`"L1".."L63"`/`"R1".."R63"`; wire 0-127 with 64 = C, both start at 0 = center
 - `patch/temp/common/octave` — UI value -3..+3 (wire 0-6)
 - `patch/temp/tone/<n>/<name>` — tone parameters, n = 1-4
+- `patch/temp/tone/<n>/pitch/t<1-4>` — pitch env times 0-127
+- `patch/temp/tone/<n>/pitch/l<1-4>` — pitch env levels -63..+63 (wire 0-126)
 
 The mapping from key to SysEx address and the UI-value ↔ wire-byte
 conversion live solely in `internal/jv1080` (`params.go`; UI and wire both start at 0 = center for pan, so -1 → wire 63 = L1, +1 → wire 65 = R1),

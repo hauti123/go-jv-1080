@@ -20,6 +20,11 @@ func TestResolveParamKeys(t *testing.T) {
 		{"patch/temp/common/octave", message.Address{0x03, 0x00, 0x00, 0x41}, KindBipolar, -3, 3},
 		{"patch/temp/tone/1/level", message.Address{0x03, 0x00, 0x10, 0x65}, KindRaw, 0, 127},
 		{"patch/temp/tone/4/cutoff", message.Address{0x03, 0x00, 0x16, 0x51}, KindRaw, 0, 127},
+		// pitch envelope of tone 1 (third address byte 0x10)
+		{"patch/temp/tone/1/pitch/t1", message.Address{0x03, 0x00, 0x10, 0x46}, KindRaw, 0, 127},
+		{"patch/temp/tone/1/pitch/t4", message.Address{0x03, 0x00, 0x10, 0x49}, KindRaw, 0, 127},
+		{"patch/temp/tone/1/pitch/l1", message.Address{0x03, 0x00, 0x10, 0x4A}, KindBipolar, -63, 63},
+		{"patch/temp/tone/1/pitch/l4", message.Address{0x03, 0x00, 0x10, 0x4D}, KindBipolar, -63, 63},
 	}
 	for _, c := range cases {
 		p, err := resolveParam(c.key)
@@ -115,6 +120,26 @@ func TestEncodeDecodePan(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodePitchEnvLevels(t *testing.T) {
+	p, err := resolveParam("patch/temp/tone/1/pitch/l1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ui, wire := range map[int]byte{-63: 0, -1: 62, 0: 63, 63: 126} {
+		data, err := p.EncodeValue(ui)
+		if err != nil {
+			t.Fatalf("l1 EncodeValue(%d): %v", ui, err)
+		}
+		if data[0] != wire {
+			t.Errorf("l1 %d: wire = %d, want %d", ui, data[0], wire)
+		}
+		back, _ := p.DecodeValue(data)
+		if back.(int) != ui {
+			t.Errorf("l1 decode(%d) = %v, want %d", wire, back, ui)
+		}
+	}
+}
+
 func TestRawToPan(t *testing.T) {
 	cases := map[int]int{0: -64, 1: -63, 63: -1, 64: 0, 65: 1, 127: 63}
 	for raw, want := range cases {
@@ -172,6 +197,9 @@ func TestTempPatchKeyAt(t *testing.T) {
 		{(0x10)*0x80 + 0x65, "patch/temp/tone/1/level", true},
 		{0x0D, "", false}, // 0x0C is efxtype, a known key
 		{-1, "", false},
+		{0x10*0x80 + 0x46, "patch/temp/tone/1/pitch/t1", true},
+		{0x10*0x80 + 0x4D, "patch/temp/tone/1/pitch/l4", true},
+		{0x16*0x80 + 0x46, "", false}, // tone 4 pitch env not registered
 	}
 	for _, c := range cases {
 		key, ok := tempPatchKeyAt(c.off)
