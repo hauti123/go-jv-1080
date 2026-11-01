@@ -45,8 +45,10 @@ type Envelope struct {
 	dragging    bool
 	dragIdx     int
 	pointerID   pointer.ID
-	start       f32.Point
-	startOff    f32.Point // press position relative to the handle's pixel position
+	lastDrag    f32.Point // position of the previous drag event (same frame as current)
+	haveLast    bool
+	accT        int // accumulated time delta since press, in device units
+	accL        int // accumulated level delta since press, in device units
 	startTimes  [4]int
 	startLevels [4]int
 }
@@ -237,14 +239,22 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 			}
 			log.Printf("ENV press: pos=(%.1f,%.1f) -> handle %d (dist %.1f), handle px=%v",
 				pe.Position.X, pe.Position.Y, best, bestD, px(e.points[best]))
-			e.beginDrag(best, pe.PointerID, pe.Position, px(e.points[best]))
+			e.beginDrag(best, pe.PointerID, pe.Position)
 			gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
 			e.active = best
 		case pointer.Drag:
 			if !e.dragging || pe.PointerID != e.pointerID {
 				continue
 			}
-			e.dragTo(e.dragIdx, pe.Position, px(e.points[e.dragIdx]), iw, ih)
+			if !e.haveLast {
+				// first drag event: same frame as all following ones; just anchor
+				e.lastDrag = pe.Position
+				e.haveLast = true
+				continue
+			}
+			dx, dy := pe.Position.X-e.lastDrag.X, pe.Position.Y-e.lastDrag.Y
+			e.lastDrag = pe.Position
+			e.dragBy(e.dragIdx, dx, dy, iw, ih)
 			e.emit(e.dragIdx)
 		case pointer.Release, pointer.Cancel:
 			log.Printf("ENV release: pos=(%.1f,%.1f) dragging=%v", pe.Position.X, pe.Position.Y, e.dragging)
@@ -284,42 +294,40 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 
 // beginDrag starts dragging handle i: records the pointer and the press
 // position plus the device values at press time.
-func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point, handlePx f32.Point) {
+func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point) {
 	e.dragging = true
 	e.dragIdx = i
 	e.pointerID = id
-	e.start = pos
-	e.startOff = f32.Pt(pos.X-handlePx.X, pos.Y-handlePx.Y)
+	e.haveLast = false
+	e.accT, e.accL = 0, 0
 	e.startTimes = e.times
 	e.startLevels = e.levels
-	log.Printf("ENV drag-begin: handle=%d pointer=%v press=(%.1f,%.1f) handlePx=(%.1f,%.1f) off=(%.1f,%.1f) times=%v levels=%v",
-		i, id, pos.X, pos.Y, handlePx.X, handlePx.Y, e.startOff.X, e.startOff.Y, e.times, e.levels)
+	log.Printf("ENV drag-begin: handle=%d pointer=%v press=(%.1f,%.1f) times=%v levels=%v",
+		i, id, pos.X, pos.Y, e.times, e.levels)
 }
 
-// dragTo moves point i by the drag delta in screen pixels, given the
-// inner screen size (iw, ih). The delta is computed as
-// (pos - handlePx) - startOff, i.e. relative to the handle's own pixel
-// position at press time, so it is independent of the event's coordinate
-// frame. It is converted into device units (time: full span envMaxTime
-// over iw px; level: 126 over ih px) and applied to the stored
-// relative time/level of point i. The segment time is clamped to 0..127
-// and the total span to envMaxTime; dragging in x shifts all following
-// segments along so their lengths stay unchanged. Y (level) is clamped
-// to -63..+63 independently.
-func (e *Envelope) dragTo(i int, pos f32.Point, handlePx f32.Point, iw, ih float32) {
+// dragBy moves point i by a drag delta (dx, dy) in screen pixels, given
+// the inner screen size (iw, ih). The delta is the difference between two
+// consecutive drag events, which share the same coordinate frame, so the
+// result is independent of the absolute frame (local vs. global after a
+// grab). The delta is converted into device units (time: full span
+// envMaxTime over iw px; level: 126 over ih px) and accumulated onto the
+// values captured at press time, then applied to the relative time/level
+// of point i. The segment time is clamped to 0..127 and the total span to
+// envMaxTime; dragging in x shifts all following segments along so their
+// lengths stay unchanged. Y (level) is clamped to -63..+63 independently.
+func (e *Envelope) dragBy(i int, dx, dy float32, iw, ih float32) {
 	if iw <= 0 || ih <= 0 {
 		return
 	}
-	rawDX := (pos.X - handlePx.X) - e.startOff.X
-	rawDY := (pos.Y - handlePx.Y) - e.startOff.Y
-	dt := int(roundF(rawDX / iw * envMaxTime))
-	dl := int(roundF(-rawDY / ih * 126))
+	e.accT += int(roundF(dx / iw * envMaxTime))
+	e.accL += int(roundF(-dy / ih * 126))
 	oldT, oldL := e.times[i], e.levels[i]
-	e.setTime(i, e.startTimes[i]+dt)
-	e.levels[i] = clampInt(e.startLevels[i]+dl, -63, 63)
+	e.setTime(i, e.startTimes[i]+e.accT)
+	e.levels[i] = clampInt(e.startLevels[i]+e.accL, -63, 63)
 	e.relayout()
-	log.Printf("ENV drag: handle=%d pos=(%.1f,%.1f) handlePx=(%.1f,%.1f) rawDelta=(%.1f,%.1f) iw=%.1f ih=%.1f -> dt=%d dl=%d | t%d %d->%d l%d %d->%d | times=%v levels=%v | points=%v",
-		i, pos.X, pos.Y, handlePx.X, handlePx.Y, rawDX, rawDY, iw, ih, dt, dl,
+	log.Printf("ENV drag: handle=%d delta=(%.1f,%.1f) acc=(%d,%d) iw=%.1f ih=%.1f | t%d %d->%d l%d %d->%d | times=%v levels=%v | points=%v",
+		i, dx, dy, e.accT, e.accL, iw, ih,
 		i, oldT, e.times[i], i, oldL, e.levels[i], e.times, e.levels, e.points)
 }
 

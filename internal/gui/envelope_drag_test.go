@@ -54,22 +54,26 @@ func TestSetTimeBounds(t *testing.T) {
 	}
 }
 
-// TestDragInDeviceUnits pins dragTo: the pixel delta is converted to device
-// units (envMaxTime over iw px, 126 over ih px), applied to the pressed
-// point only, with segment bounds enforced.
-func envPx(p f32.Point, padX, padT, iw, ih float32) f32.Point {
-	return f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
+// dragSeq simulates a drag: anchor at the first drag position, then apply
+// the given per-event pixel deltas.
+func dragSeq(e *Envelope, i int, iw, ih float32, deltas ...f32.Point) {
+	e.beginDrag(i, 1, f32.Pt(0, 0))
+	for _, d := range deltas {
+		e.lastDrag = e.lastDrag.Add(d)
+		e.dragBy(i, d.X, d.Y, iw, ih)
+	}
 }
 
+// TestDragInDeviceUnits pins dragBy: the pixel delta is converted to device
+// units (envMaxTime over iw px, 126 over ih px), accumulated onto the
+// press-time values, applied to the dragged point only, with segment bounds
+// enforced.
 func TestDragInDeviceUnits(t *testing.T) {
 	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
 	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
 	iw, ih := float32(508), float32(126) // 1px == 1 device unit
-	i := 1
-	hp := envPx(e.points[i], 0, 0, iw, ih) // handle pixel at press
-	e.beginDrag(i, 1, hp, hp)              // press exactly on the handle
-	// drag right 30px, up 10px (positions relative to the handle)
-	e.dragTo(i, f32.Pt(hp.X+30, hp.Y-10), hp, iw, ih)
+	// drag right 30px, up 10px in one event
+	dragSeq(e, 1, iw, ih, f32.Pt(30, -10))
 	if e.times[1] != 70 {
 		t.Errorf("t2 after +30px = %d, want 70", e.times[1])
 	}
@@ -86,27 +90,47 @@ func TestDragInDeviceUnits(t *testing.T) {
 	}
 }
 
-// TestPerHandleDrag simulates pressing exactly on each handle's pixel
-// position and dragging: y-drag changes the level, x-drag changes the
-// segment and shifts the following points along.
+// TestDragAccumulates pins that consecutive small deltas accumulate to the
+// same result as one big delta (no per-event clamping artifacts), and that
+// the absolute event frame does not matter (only differences between
+// consecutive events).
+func TestDragAccumulates(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+	iw, ih := float32(508), float32(126)
+	// 3 events of +10px each == one +30px event
+	dragSeq(e, 1, iw, ih, f32.Pt(10, 0), f32.Pt(10, 0), f32.Pt(10, 0))
+	if e.times[1] != 70 {
+		t.Errorf("t2 after 3x10px = %d, want 70", e.times[1])
+	}
+	// same deltas delivered in a different absolute frame (origin +500,+300)
+	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
+	e.beginDrag(1, 1, f32.Pt(500, 300))
+	e.lastDrag = f32.Pt(500, 300)
+	e.haveLast = true
+	for _, d := range []f32.Point{{X: 10, Y: 0}, {X: 10, Y: 0}, {X: 10, Y: 0}} {
+		e.lastDrag = e.lastDrag.Add(d)
+		e.dragBy(1, d.X, d.Y, iw, ih)
+	}
+	if e.times[1] != 70 {
+		t.Errorf("t2 in shifted frame = %d, want 70 (frame-independent)", e.times[1])
+	}
+}
+
+// TestPerHandleDrag simulates pressing exactly on each handle and dragging:
+// y-drag changes the level, x-drag changes the segment and the following
+// points shift along.
 func TestPerHandleDrag(t *testing.T) {
 	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
 	iw, ih := float32(300), float32(100)
-	padX, padT := float32(8), float32(8)
 	for _, i := range []int{0, 1, 2, 3} {
 		e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
-		p := e.points[i]
-		press := f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
-		e.beginDrag(i, 1, press, envPx(e.points[i], padX, padT, iw, ih))
-		e.dragTo(i, f32.Pt(press.X, press.Y-30), envPx(e.points[i], padX, padT, iw, ih), iw, ih) // 30px up
+		dragSeq(e, i, iw, ih, f32.Pt(0, -30)) // 30px up
 		if e.levels[i] <= [4]int{0, 20, -20, 0}[i] {
 			t.Errorf("handle %d: y-drag did not raise level (%d)", i, e.levels[i])
 		}
 		e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
-		p = e.points[i]
-		press = f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
-		e.beginDrag(i, 1, press, envPx(e.points[i], padX, padT, iw, ih))
-		e.dragTo(i, f32.Pt(press.X+30, press.Y), envPx(e.points[i], padX, padT, iw, ih), iw, ih) // 30px right
+		dragSeq(e, i, iw, ih, f32.Pt(30, 0)) // 30px right
 		if e.times[i] <= 40 {
 			t.Errorf("handle %d: x-drag did not grow segment (t=%d)", i, e.times[i])
 		}
@@ -126,7 +150,7 @@ func TestHitTestSelectsPressedHandle(t *testing.T) {
 	padX, padT := float32(8), float32(8)
 	px := func(p f32.Point) f32.Point { return f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih) }
 	for i := 0; i < 4; i++ {
-		press := envPx(e.points[i], padX, padT, iw, ih)
+		press := px(e.points[i])
 		best, bestD := 0, float32(1<<30)
 		for j := range e.points {
 			p := px(e.points[j])
@@ -138,34 +162,5 @@ func TestHitTestSelectsPressedHandle(t *testing.T) {
 		if best != i {
 			t.Errorf("press at handle %d selected %d", i, best)
 		}
-	}
-}
-
-// TestDragFrameIndependent pins that dragTo produces the same device-unit
-// delta regardless of the absolute coordinate frame the drag event
-// arrives in (local vs. window-global after a grab): the delta is computed
-// relative to the handle's pixel position.
-func TestDragFrameIndependent(t *testing.T) {
-	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
-	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
-	iw, ih := float32(508), float32(126) // 1px == 1 unit
-	i := 1
-	hp := envPx(e.points[i], 0, 0, iw, ih)
-	e.beginDrag(i, 1, hp, hp)
-
-	// same physical drag (+30px right, -10px up) delivered in two frames:
-	// local frame (handle at hp) and global frame (handle at hp + origin)
-	origin := f32.Pt(423, 278)
-	e.dragTo(i, f32.Pt(hp.X+30, hp.Y-10), hp, iw, ih)
-	wantT, wantL := e.times[1], e.levels[1]
-	e.SetAll([4]int{40, 40, 40, 40}, [4]int{0, 20, -20, 0})
-	e.beginDrag(i, 1, f32.Pt(hp.X+origin.X, hp.Y+origin.Y), f32.Pt(hp.X+origin.X, hp.Y+origin.Y))
-	e.dragTo(i, f32.Pt(hp.X+origin.X+30, hp.Y+origin.Y-10), f32.Pt(hp.X+origin.X, hp.Y+origin.Y), iw, ih)
-	if e.times[1] != wantT || e.levels[1] != wantL {
-		t.Errorf("frame-dependent drag: local gave (t=%d l=%d), global gave (t=%d l=%d)",
-			wantT, wantL, e.times[1], e.levels[1])
-	}
-	if wantT != 70 || wantL != 30 {
-		t.Errorf("want (t=70 l=30), got (t=%d l=%d)", wantT, wantL)
 	}
 }
