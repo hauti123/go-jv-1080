@@ -204,6 +204,12 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	// Origin marker.
 	fillRect(gtx, padX-3, baseY-3, 6, 6, rgb(0x2F7F3A))
 
+	// The whole screen is the envelope's event area; the tags decide
+	// which handle a press/drag belongs to (declared per handle below).
+	screen := clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops)
+	event.Op(gtx.Ops, e)
+	screen.Pop()
+
 	// Handles: hit area first (so events work), then events, then visuals.
 	for i := range e.points {
 		p := px(e.points[i])
@@ -213,6 +219,32 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 		}.Push(gtx.Ops)
 		event.Op(gtx.Ops, &e.tags[i])
 		cs.Pop()
+	}
+	// Drain events addressed to the screen tag itself (fallback for
+	// presses outside all handle areas).
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: e, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if pe, ok := ev.(pointer.Event); ok && pe.Kind == pointer.Press && pe.Buttons == pointer.ButtonPrimary {
+			// pick the nearest handle and start dragging it
+			best, bestD := 0, float32(1<<30)
+			for i := range e.points {
+				p := px(e.points[i])
+				d := (pe.Position.X-p.X)*(pe.Position.X-p.X) + (pe.Position.Y-p.Y)*(pe.Position.Y-p.Y)
+				if d < bestD {
+					best, bestD = i, d
+				}
+			}
+			e.dragging = true
+			e.dragIdx = best
+			e.pointerID = pe.PointerID
+			e.start = pe.Position
+			e.startVal = e.points[best]
+			e.active = best
+			gtx.Execute(pointer.GrabCmd{Tag: &e.tags[best], ID: pe.PointerID})
+		}
 	}
 	for i := range e.points {
 		tag := &e.tags[i]
@@ -251,9 +283,7 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 				if !e.dragging || e.dragIdx != i || pe.PointerID != e.pointerID {
 					continue
 				}
-				e.points[i].X = e.startVal.X + (pe.Position.X-e.start.X)/iw
-				e.points[i].Y = e.startVal.Y - (pe.Position.Y-e.start.Y)/ih
-				e.clampPoint(i)
+				e.dragTo(i, pe.Position, iw, ih)
 				e.emit(i)
 			case pointer.Release, pointer.Cancel:
 				if e.dragging && e.dragIdx == i {
@@ -288,6 +318,18 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 	Offset(gtx, (w-ts.X)/2, h+1, func() { DrawPixelText(gtx, e.Title, cell) })
 
 	return layout.Dimensions{Size: image.Pt(w, total)}
+}
+
+// dragTo moves point i by the drag delta (pos - e.start) in screen pixels,
+// given the inner screen size (iw, ih). X grows to the right (time), Y
+// grows upwards (level), then the point is clamped.
+func (e *Envelope) dragTo(i int, pos f32.Point, iw, ih float32) {
+	if iw <= 0 || ih <= 0 {
+		return
+	}
+	e.points[i].X = e.startVal.X + (pos.X-e.start.X)/iw
+	e.points[i].Y = e.startVal.Y - (pos.Y-e.start.Y)/ih
+	e.clampPoint(i)
 }
 
 // emit reports the current device values of point i through OnChange.
