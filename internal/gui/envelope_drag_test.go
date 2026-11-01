@@ -198,3 +198,31 @@ func TestDragFrameSwitchSkipped(t *testing.T) {
 		t.Errorf("after real +10px drag: t=%d, want 50", e.times[i])
 	}
 }
+
+// TestDragSmallDeltasNotLost pins that many small sub-unit drag deltas
+// accumulate without rounding loss: 100 x 1px must equal one 100px drag.
+func TestDragSmallDeltasNotLost(t *testing.T) {
+	e := NewEnvelope("ENV", [4]string{"t0", "t1", "t2", "t3"}, [4]string{"l0", "l1", "l2", "l3"})
+	e.SetAll([4]int{10, 10, 10, 10}, [4]int{0, 0, 0, 0})
+	iw, ih := float32(818), float32(224) // real widget inner size: 1px < 1 unit
+	i := 1
+	e.beginDrag(i, 1, f32.Pt(0, 0))
+	// 100 events of +1px right: each is 508/818 = 0.621 units, must accumulate
+	for k := 0; k < 100; k++ {
+		e.dragBy(i, 1, 0, iw, ih)
+	}
+	want := 10 + int(roundF(100.0/iw*508)) // 10 + 62 = 72
+	if e.times[i] != want {
+		t.Errorf("100x1px drag: t=%d, want %d (no rounding loss)", e.times[i], want)
+	}
+	// y: 100 events of -1px (up): each 126/224 = 0.5625 units
+	e.SetAll([4]int{10, 10, 10, 10}, [4]int{0, 0, 0, 0})
+	e.beginDrag(i, 1, f32.Pt(0, 0))
+	for k := 0; k < 100; k++ {
+		e.dragBy(i, 0, -1, iw, ih)
+	}
+	wantL := int(roundF(100.0 / ih * 126)) // 56
+	if e.levels[i] != wantL {
+		t.Errorf("100x1px up drag: l=%d, want %d", e.levels[i], wantL)
+	}
+}

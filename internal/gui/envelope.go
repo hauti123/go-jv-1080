@@ -47,8 +47,8 @@ type Envelope struct {
 	pointerID   pointer.ID
 	lastDrag    f32.Point // position of the previous drag event (same frame as current)
 	haveLast    bool
-	accT        int // accumulated time delta since press, in device units
-	accL        int // accumulated level delta since press, in device units
+	accTF       float32 // accumulated time delta since press, in device units (float; rounded only when applied)
+	accLF       float32 // accumulated level delta since press, in device units
 	startTimes  [4]int
 	startLevels [4]int
 }
@@ -314,7 +314,7 @@ func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point) {
 	e.dragIdx = i
 	e.pointerID = id
 	e.haveLast = false
-	e.accT, e.accL = 0, 0
+	e.accTF, e.accLF = 0, 0
 	e.startTimes = e.times
 	e.startLevels = e.levels
 	log.Printf("ENV drag-begin: handle=%d pointer=%v press=(%.1f,%.1f) times=%v levels=%v",
@@ -335,14 +335,16 @@ func (e *Envelope) dragBy(i int, dx, dy float32, iw, ih float32) {
 	if iw <= 0 || ih <= 0 {
 		return
 	}
-	e.accT += int(roundF(dx / iw * envMaxTime))
-	e.accL += int(roundF(-dy / ih * 126))
+	// accumulate in float so sub-unit fractions of small per-event deltas
+	// are not lost to rounding; round only when applying to the value
+	e.accTF += dx / iw * envMaxTime
+	e.accLF += -dy / ih * 126
 	oldT, oldL := e.times[i], e.levels[i]
-	e.setTime(i, e.startTimes[i]+e.accT)
-	e.levels[i] = clampInt(e.startLevels[i]+e.accL, -63, 63)
+	e.setTime(i, e.startTimes[i]+int(roundF(e.accTF)))
+	e.levels[i] = clampInt(e.startLevels[i]+int(roundF(e.accLF)), -63, 63)
 	e.relayout()
-	log.Printf("ENV drag: handle=%d delta=(%.1f,%.1f) acc=(%d,%d) iw=%.1f ih=%.1f | t%d %d->%d l%d %d->%d | times=%v levels=%v | points=%v",
-		i, dx, dy, e.accT, e.accL, iw, ih,
+	log.Printf("ENV drag: handle=%d delta=(%.1f,%.1f) acc=(%.2f,%.2f)->(%d,%d) iw=%.1f ih=%.1f | t%d %d->%d l%d %d->%d | times=%v levels=%v | points=%v",
+		i, dx, dy, e.accTF, e.accLF, int(roundF(e.accTF)), int(roundF(e.accLF)), iw, ih,
 		i, oldT, e.times[i], i, oldL, e.levels[i], e.times, e.levels, e.points)
 }
 
