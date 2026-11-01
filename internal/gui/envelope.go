@@ -2,7 +2,6 @@ package gui
 
 import (
 	"image"
-	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -43,7 +42,6 @@ type Envelope struct {
 	pointerID pointer.ID
 	start     f32.Point
 	startVal  f32.Point
-	lastPress time.Duration
 }
 
 const (
@@ -58,7 +56,7 @@ var envNames = [4]string{"T1", "T2", "T3", "T4"}
 // parameter key bindings, starting at the proto defaults
 // (attack peak, decay to sustain, release).
 func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
-	e := &Envelope{Title: title, TimeKeys: timeKeys, LevelKeys: levelKeys, lastPress: -time.Hour}
+	e := &Envelope{Title: title, TimeKeys: timeKeys, LevelKeys: levelKeys}
 	// defaults as cumulative x over the full 4*127 span
 	e.defaults = [4]f32.Point{
 		{X: 0.14, Y: 1.0}, // attack peak
@@ -262,14 +260,9 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 					best, bestD = i, d
 				}
 			}
-			if pe.Time-e.lastPress < dblClick && e.active == best && !e.dragging {
-				e.resetPoint(best) // double-click resets
-			} else {
-				e.beginDrag(best, pe.PointerID, pe.Position)
-				gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
-			}
+			e.beginDrag(best, pe.PointerID, pe.Position)
+			gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
 			e.active = best
-			e.lastPress = pe.Time
 		case pointer.Drag:
 			if !e.dragging || pe.PointerID != e.pointerID {
 				continue
@@ -318,13 +311,6 @@ func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point) {
 	e.pointerID = id
 	e.start = pos
 	e.startVal = e.points[i]
-}
-
-// resetPoint restores point i to its default (double-click).
-func (e *Envelope) resetPoint(i int) {
-	e.points[i] = e.defaults[i]
-	e.clampPoint(i)
-	e.emit(i)
 }
 
 // dragTo moves point i by the drag delta (pos - e.start) in screen pixels,
