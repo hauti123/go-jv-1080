@@ -65,12 +65,9 @@ func main() {
 		fatal("cannot open MIDI device: %v", err)
 	}
 	defer dev.Close()
-	// Log all incoming and outgoing messages in hex.
-	dev.RegisterCallback(func(msg []byte) {
-		fmt.Printf("REC : [%s]\n", message.Hex(msg))
-	})
-	dev.SetSendLogger(func(msg []byte) {
-		fmt.Printf("SEND: [%s]\n", message.Hex(msg))
+	// Log all incoming and outgoing raw messages in hex.
+	dev.SetLogger(func(direction string, msg []byte) {
+		fmt.Printf("%s: [%s]\n", direction, message.Hex(msg))
 	})
 
 	id, err := strconv.ParseUint(*deviceID, 16, 8)
@@ -663,9 +660,9 @@ The patch categories follow the Patch Edit Mode structure described in
 doc/patch-edit-mode-structure.md. Parameter names are unique within their
 block (common or tone); the same concept uses the same name in both.
 
-All messages to and from the device are logged in hex:
-  SEND: [F0 41 10 6A ... F7]
-  REC : [F0 41 10 6A ... F7]
+All raw MIDI messages sent and received are logged in hex:
+  TX: [F0 41 10 6A ... F7]
+  RX: [F0 41 10 6A ... F7]
 
 Parameter values may be given in decimal or hex (0x..). Values outside
 the documented range are accepted deliberately, to allow special tests.

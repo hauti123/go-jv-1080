@@ -39,6 +39,7 @@ import (
 	"go-jv-1080/internal/gui"
 	"go-jv-1080/internal/jv1080"
 	"go-jv-1080/internal/midi"
+	"go-jv-1080/internal/midi/message"
 )
 
 var (
@@ -67,6 +68,10 @@ func main() {
 		log.Printf("jv1080-gui: cannot open MIDI device (%v); running without device", err)
 	} else {
 		defer dev.Close()
+		// Log all raw MIDI messages sent and received in hex.
+		dev.SetLogger(func(direction string, msg []byte) {
+			log.Printf("MIDI %s: [%s]", direction, message.Hex(msg))
+		})
 		id, err := strconv.ParseUint(*deviceID, 16, 8)
 		if err != nil {
 			log.Fatalf("jv1080-gui: invalid device ID %q: %v", *deviceID, err)
