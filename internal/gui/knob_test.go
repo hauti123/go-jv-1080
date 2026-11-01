@@ -158,6 +158,23 @@ func TestLitRangeCentered(t *testing.T) {
 	}
 }
 
+func TestCenterTickOnlyForCenteredStyles(t *testing.T) {
+	// at minimum, a min-max knob must have an empty lit range (no green
+	// tick at 12 o'clock); bipolar/pan at center get the 12 o'clock tick
+	m := NewKnob(KnobMinMax, "LEVEL", 0, 127)
+	m.Set(0)
+	from, to := litRange(m)
+	if from != MinAngle || to != MinAngle {
+		t.Errorf("minmax litRange at 0 = [%v %v], want [%v %v] (empty)", from, to, MinAngle, MinAngle)
+	}
+	b := NewKnob(KnobBipolar, "OCTAVE", -3, 3)
+	b.Set(0)
+	from, to = litRange(b)
+	if from != 0 || to != 0 {
+		t.Errorf("bipolar litRange at 0 = [%v %v], want [0 0]", from, to)
+	}
+}
+
 func TestKnobSetReportsChange(t *testing.T) {
 	k := NewKnob(KnobMinMax, "LEVEL", 0, 127)
 	var got []int

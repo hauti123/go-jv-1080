@@ -280,12 +280,18 @@ func (k *Knob) draw(gtx layout.Context, th *Theme, size float64) {
 	strokeArc(gtx, cx, cy, size*0.329, MinAngle, MaxAngle, 5, th.ArcBase)
 	if litTo > litFrom {
 		strokeArc(gtx, cx, cy, size*0.329, litFrom, litTo, 5, th.Lit)
-	} else {
-		// center position: light only the 12 o'clock tick itself
+	} else if k.Style == KnobBipolar || k.Style == KnobPan {
+		// center position of a bipolar/pan knob: light only the 12
+		// o'clock tick itself
 		strokeArc(gtx, cx, cy, size*0.329, -0.5, 0.5, 5, th.Lit)
 	}
-	// radial ticks around the arc; ticks between litFrom and litTo are lit
-	drawTicksRange(gtx, cx, cy, size*0.371, size*0.421, 40, 4, th.TickBase, th.Lit, MinAngle, MaxAngle, litFrom, litTo)
+	// radial ticks around the arc; ticks between litFrom and litTo are lit,
+	// plus the 12 o'clock tick at the center position of bipolar/pan knobs
+	tickFrom, tickTo := litFrom, litTo
+	if tickTo <= tickFrom && (k.Style == KnobBipolar || k.Style == KnobPan) {
+		tickFrom, tickTo = -0.5, 0.5
+	}
+	drawTicksRange(gtx, cx, cy, size*0.371, size*0.421, 40, 4, th.TickBase, th.Lit, MinAngle, MaxAngle, tickFrom, tickTo)
 
 	// metal cap
 	fillCircleGradient(gtx, cx, cy, size*0.271, th.CapTop, th.CapBot)
