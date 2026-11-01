@@ -27,12 +27,17 @@ func TestEnvelopePointRoundTrip(t *testing.T) {
 
 func TestEnvelopeXOrderPreserved(t *testing.T) {
 	e := NewEnvelope("ENV", [4]string{"a", "b", "c", "d"}, [4]string{"e", "f", "g", "h"})
-	e.SetPoint(0, 100, 0)
-	e.SetPoint(1, 10, 0) // tries to cross point 0
-	t1, _ := e.Point(1)
-	t0, _ := e.Point(0)
-	if t1 <= t0 {
-		t.Errorf("x order violated: t1=%d <= t0=%d", t1, t0)
+	e.SetAll([4]int{100, 10, 10, 10}, [4]int{0, 0, 0, 0})
+	// cumulative x positions must be non-decreasing
+	for i := 1; i < 4; i++ {
+		if e.points[i].X < e.points[i-1].X {
+			t.Errorf("x order violated: p[%d].X=%v < p[%d].X=%v", i, e.points[i].X, i-1, e.points[i-1].X)
+		}
+	}
+	// and the relative times decode to the clamped segments
+	got := e.times()
+	if got[0] != 100 || got[1] != 10 {
+		t.Errorf("times() = %v, want first segments [100 10 ...]", got)
 	}
 }
 

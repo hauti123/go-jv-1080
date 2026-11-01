@@ -62,6 +62,7 @@ var envNames = [4]string{"T1", "T2", "T3", "T4"}
 // (attack peak, decay to sustain, release).
 func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
 	e := &Envelope{Title: title, TimeKeys: timeKeys, LevelKeys: levelKeys, lastPress: -time.Hour}
+	// defaults as cumulative x over the full 4*127 span
 	e.defaults = [4]f32.Point{
 		{X: 0.14, Y: 1.0}, // attack peak
 		{X: 0.30, Y: 0.6}, // decay into sustain
@@ -75,37 +76,64 @@ func NewEnvelope(title string, timeKeys, levelKeys [4]string) *Envelope {
 	return e
 }
 
-// SetPoint sets point i programmatically from device values (time 0-127,
-// level -63..+63) without calling OnChange. The x clamp only enforces the
-// ordering against the current neighbours, it never moves a point across
-// them; to avoid surprises when loading a whole envelope, callers should
-// set points left to right (or use SetAll).
+// envMaxTime is the total time span of the envelope: the four time
+// parameters are relative to each other, so the screen covers the sum of
+// all four (max 4*127).
+const envMaxTime = 4 * 127
+
+// times returns the relative time values (t1..t4, each 0-127) decoded from
+// the cumulative x positions.
+func (e *Envelope) times() [4]int {
+	var out [4]int
+	prev := float32(0)
+	for i := 0; i < 4; i++ {
+		abs := clampf01(e.points[i].X) * envMaxTime
+		out[i] = int(roundF(clampf(abs-prev, 0, 127)))
+		prev = abs
+	}
+	return out
+}
+
+// SetPoint sets point i programmatically from device values (time 0-127
+// relative to the previous point, level -63..+63) without calling
+// OnChange. Use SetAll when loading a whole envelope.
 func (e *Envelope) SetPoint(i int, timeVal, levelVal int) {
 	if i < 0 || i > 3 {
 		return
 	}
-	e.points[i].X = clampf01(float32(timeVal) / 127)
+	t := e.times()
+	t[i] = clampInt(timeVal, 0, 127)
+	e.setTimes(t)
 	e.points[i].Y = clampf01((float32(levelVal) + 63) / 126)
-	e.clampPoint(i)
 }
 
-// SetAll sets all four points at once from device values; the x ordering
-// clamp is applied only after all points are placed, so the values are
-// taken over verbatim when they are already ordered.
+// SetAll sets all four points at once from device values (relative times
+// t1..t4, levels l1..l4).
 func (e *Envelope) SetAll(times, levels [4]int) {
+	e.setTimes(times)
 	for i := 0; i < 4; i++ {
-		e.points[i].X = clampf01(float32(times[i]) / 127)
 		e.points[i].Y = clampf01((float32(levels[i]) + 63) / 126)
 	}
+}
+
+// setTimes places the points at the cumulative x positions of the given
+// relative times, clamped so each segment stays within 0..127 and the
+// total within envMaxTime.
+func (e *Envelope) setTimes(times [4]int) {
+	cum := float32(0)
 	for i := 0; i < 4; i++ {
-		e.clampPoint(i)
+		seg := clampf(float32(clampInt(times[i], 0, 127)), 0, envMaxTime-cum)
+		cum += seg
+		e.points[i].X = clampf01(cum / envMaxTime)
 	}
 }
 
-// Point returns the device values of point i (time 0-127, level -63..+63).
+// Point returns the device values of point i (relative time 0-127, level
+// -63..+63).
 func (e *Envelope) Point(i int) (timeVal, levelVal int) {
+	t := e.times()
 	p := e.points[i]
-	return int(roundF(clampf01(p.X) * 127)), int(roundF(clampf01(p.Y)*126)) - 63
+	return t[i], int(roundF(clampf01(p.Y)*126)) - 63
 }
 
 func roundF(v float32) float32 {
@@ -129,6 +157,9 @@ func clampf01(v float32) float32 {
 }
 
 func (e *Envelope) clampPoint(i int) {
+	// x is cumulative over envMaxTime; keep a minimum segment (envGap of
+	// the total span) to each neighbour and stay on screen
+	gap := float32(envGap)
 	prev := float32(envMinX)
 	if i > 0 {
 		prev = e.points[i-1].X
@@ -137,7 +168,7 @@ func (e *Envelope) clampPoint(i int) {
 	if i < len(e.points)-1 {
 		next = e.points[i+1].X
 	}
-	e.points[i].X = clampf(e.points[i].X, prev+envGap, next-envGap)
+	e.points[i].X = clampf(e.points[i].X, prev+gap, next-gap)
 	e.points[i].X = clampf(e.points[i].X, envMinX, envMaxX)
 	e.points[i].Y = clampf(e.points[i].Y, 0, 1)
 }
