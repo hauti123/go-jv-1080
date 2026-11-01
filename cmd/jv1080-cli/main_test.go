@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"go-jv-1080/internal/jv1080"
 	"go-jv-1080/internal/midi/message"
 )
 
@@ -80,24 +81,6 @@ func TestParseValues(t *testing.T) {
 	}
 }
 
-func TestPanValue(t *testing.T) {
-	cases := map[string]int{
-		"l1": 63, "l13": 51, "l63": 1, "r1": 65, "r13": 77, "r63": 127,
-		"center": 64, "c": 64,
-	}
-	for in, want := range cases {
-		got, ok := panValue(in)
-		if !ok || got != want {
-			t.Errorf("panValue(%q) = %d, %v; want %d", in, got, ok, want)
-		}
-	}
-	for _, bad := range []string{"l0", "l64", "x5", ""} {
-		if _, ok := panValue(bad); ok {
-			t.Errorf("panValue(%q) should fail", bad)
-		}
-	}
-}
-
 func TestParseBank(t *testing.T) {
 	for _, s := range []string{"user", "pr-a", "pr-b", "pr-c", "gm", "card-a", "card-b", "exp-a", "exp-d", "USER", "PR-A"} {
 		if _, err := parseBank(s); err != nil {
@@ -109,79 +92,46 @@ func TestParseBank(t *testing.T) {
 	}
 }
 
-func TestCommonParam(t *testing.T) {
-	off, size, err := commonParam("level")
-	if err != nil || off != 0x2E || size != 1 {
-		t.Errorf("commonParam(level) = %d, %d, %v", off, size, err)
-	}
-	if _, _, err := commonParam("bogus"); err == nil {
-		t.Error("commonParam(bogus) should fail")
-	}
-}
-
-func TestToneParam(t *testing.T) {
-	off, size, err := toneParam("wave")
-	if err != nil || off != 0x03 || size != 2 {
-		t.Errorf("toneParam(wave) = %d, %d, %v (nibblized)", off, size, err)
-	}
-	if _, _, err := toneParam("bogus"); err == nil {
-		t.Error("toneParam(bogus) should fail")
-	}
-}
-
-func TestFormatValue(t *testing.T) {
-	cases := []struct {
-		name string
-		data []byte
-		want string
-	}{
-		{"level", []byte{44}, "44"},
-		{"level", []byte{0x7F}, "127"},
-		{"pan", []byte{51}, "l13 (51)"},
-		{"pan", []byte{77}, "r13 (77)"},
-		{"pan", []byte{64}, "center (64)"},
-		{"coarse", []byte{36}, "-12 (36)"},
-		{"fine", []byte{75}, "25 (75)"},
-		{"wave", []byte{0x0C, 0x01}, "193"}, // nibblized raw 0xC1 = 193 -> wave 194
-		{"switch", []byte{1}, "1"},
-	}
-	for _, c := range cases {
-		if got := formatValue(c.name, c.data); got != c.want {
-			t.Errorf("formatValue(%q, % X) = %q, want %q", c.name, c.data, got, c.want)
-		}
-	}
-}
-
-func TestWaveAndTVFParam(t *testing.T) {
-	if off, _, err := waveParam("gain"); err != nil || off != 0x05 {
-		t.Errorf("waveParam(gain) = %d, %v", off, err)
-	}
-	if off, _, err := tvfParam("cutoff"); err != nil || off != 0x51 {
-		t.Errorf("tvfParam(cutoff) = %d, %v", off, err)
-	}
-	if len(tvfEnvOffsets) != 8 || tvfEnvOffsets[0] != 0x5B || tvfEnvOffsets[7] != 0x62 {
-		t.Errorf("tvfEnvOffsets = % X", tvfEnvOffsets)
-	}
-}
-
 func TestParsePatchParams(t *testing.T) {
 	cases := []struct {
 		args []string
-		want patchParam
+		want string
 	}{
-		{[]string{"common", "level", "100"}, patchParam{"common", 0, 0x2E, 1, "level"}},
-		{[]string{"common", "pan", "l13"}, patchParam{"common", 0, 0x2F, 1, "pan"}},
-		{[]string{"common", "struct12", "3"}, patchParam{"common", 0, 0x44, 1, "struct12"}},
-		{[]string{"common", "tempo", "0x01", "0x0A"}, patchParam{"common", 0, 0x2C, 2, "tempo"}},
-		{[]string{"efx", "reverbtype", "3"}, patchParam{"common", 0, 0x27, 1, "reverbtype"}},
-		{[]string{"efx", "tone", "3", "output", "2"}, patchParam{"tone", 3, 0x7D, 1, "output"}},
-		{[]string{"efx", "tone", "2", "reverb", "64"}, patchParam{"tone", 2, 0x80, 1, "reverb"}},
-		{[]string{"ctrl", "assign", "1"}, patchParam{"common", 0, 0x33, 1, "assign"}},
-		{[]string{"ctrl", "3", "src", "4"}, patchParam{"common", 0, 0x3B, 1, "src"}},
-		{[]string{"ctrl", "2", "hold", "1"}, patchParam{"common", 0, 0x3E, 1, "hold"}},
-		{[]string{"ctrl", "tone", "4", "rxpan", "2"}, patchParam{"tone", 4, 0x14, 1, "rxpan"}},
-		{[]string{"ctrl", "2", "tone", "3", "dst3", "7"}, patchParam{"tone", 3, 0x21, 1, "dst3"}},
-		{[]string{"ctrl", "3", "tone", "1", "dep2", "70"}, patchParam{"tone", 1, 0x28, 1, "dep2"}},
+		{[]string{"common", "level", "100"}, "patch/temp/common/level"},
+		{[]string{"common", "pan", "l13"}, "patch/temp/common/pan"},
+		{[]string{"common", "struct12", "3"}, "patch/temp/common/struct12"},
+		{[]string{"common", "tempo", "120"}, "patch/temp/common/tempo"},
+		{[]string{"common", "name", "Piano"}, "patch/temp/common/name"},
+		{[]string{"efx", "reverbtype", "3"}, "patch/temp/common/reverbtype"},
+		{[]string{"efx", "tone", "3", "output", "2"}, "patch/temp/tone/3/efx/output"},
+		{[]string{"efx", "tone", "2", "reverb", "64"}, "patch/temp/tone/2/efx/reverb"},
+		{[]string{"ctrl", "assign", "1"}, "patch/temp/common/assign"},
+		{[]string{"ctrl", "3", "src", "4"}, "patch/temp/common/ctrl3src"},
+		{[]string{"ctrl", "2", "hold", "1"}, "patch/temp/common/ctrl2hold"},
+		{[]string{"ctrl", "tone", "4", "rxpan", "2"}, "patch/temp/tone/4/rxpan"},
+		{[]string{"ctrl", "2", "tone", "3", "dst3", "7"}, "patch/temp/tone/3/ctrl2/dst3"},
+		{[]string{"ctrl", "3", "tone", "1", "dep2", "70"}, "patch/temp/tone/1/ctrl3/dep2"},
+		// WAVE, LFO, PITCH, TVF and TVA categories.
+		{[]string{"wave", "gain", "2"}, "patch/temp/tone/1/gain"},
+		{[]string{"wave", "tone", "2", "number", "194"}, "patch/temp/tone/2/number"},
+		{[]string{"lfo", "1", "tone", "3", "rate", "60"}, "patch/temp/tone/3/lfo1/rate"},
+		{[]string{"lfo", "2", "tone", "1", "fadetime", "40"}, "patch/temp/tone/1/lfo2/fadetime"},
+		{[]string{"lfo", "2", "pitch", "70"}, "patch/temp/tone/1/lfo2/pitch"},
+		{[]string{"lfo", "1", "filter", "64"}, "patch/temp/tone/1/lfo1/filter"},
+		{[]string{"lfo", "2", "pan", "80"}, "patch/temp/tone/1/lfo2/pan"},
+		{[]string{"pitch", "tone", "2", "coarse", "-12"}, "patch/temp/tone/2/pitch/coarse"},
+		{[]string{"pitch", "tone", "2", "env", "depth", "12"}, "patch/temp/tone/2/pitch/depth"},
+		{[]string{"pitch", "env", "l4", "64"}, "patch/temp/tone/1/pitch/l4"},
+		{[]string{"pitch", "env", "keyfollow", "5"}, "patch/temp/tone/1/pitch/envkeyfollow"},
+		{[]string{"tvf", "tone", "1", "cutoff", "100"}, "patch/temp/tone/1/tvf/cutoff"},
+		{[]string{"tvf", "tone", "1", "envdepth", "64"}, "patch/temp/tone/1/tvf/envdepth"},
+		{[]string{"tvf", "tone", "4", "env", "t2", "50"}, "patch/temp/tone/4/tvf/t2"},
+		{[]string{"tvf", "env", "l1", "60"}, "patch/temp/tone/1/tvf/l1"},
+		{[]string{"tva", "tone", "2", "level", "110"}, "patch/temp/tone/2/tva/level"},
+		{[]string{"tva", "tone", "2", "biaspoint", "60"}, "patch/temp/tone/2/tva/biaspoint"},
+		{[]string{"tva", "tone", "3", "env", "t1", "40"}, "patch/temp/tone/3/tva/t1"},
+		{[]string{"tva", "env", "l3", "70"}, "patch/temp/tone/1/tva/l3"},
+		{[]string{"tone", "tone", "3", "keyupper", "100"}, "patch/temp/tone/3/keyupper"},
 	}
 	for _, c := range cases {
 		cmds, err := parsePatchParams(c.args[0], c.args[1:])
@@ -189,43 +139,13 @@ func TestParsePatchParams(t *testing.T) {
 			t.Errorf("parsePatchParams(%v): %v", c.args, err)
 			continue
 		}
-		if len(cmds) != 1 || cmds[0].param != c.want {
-			t.Errorf("parsePatchParams(%v) = %+v, want %+v", c.args, cmds, c.want)
-		}
-	}
-	// WAVE, LFO, PITCH, TVF and TVA categories.
-	special := []struct {
-		args []string
-		want patchParam
-	}{
-		{[]string{"wave", "gain", "2"}, patchParam{"tone", 1, 0x05, 1, "gain"}},
-		{[]string{"wave", "tone", "2", "number", "0x0C", "0x01"}, patchParam{"tone", 2, 0x03, 2, "number"}},
-		{[]string{"lfo", "1", "tone", "3", "rate", "60"}, patchParam{"tone", 3, 0x2F, 1, "rate"}},
-		{[]string{"lfo", "2", "tone", "1", "fadetime", "40"}, patchParam{"tone", 1, 0x3B, 1, "fadetime"}},
-		{[]string{"lfo", "2", "pitch", "70"}, patchParam{"tone", 1, 0x4F, 1, "pitch"}},
-		{[]string{"lfo", "1", "filter", "64"}, patchParam{"tone", 1, 0x63, 1, "filter"}},
-		{[]string{"lfo", "2", "pan", "80"}, patchParam{"tone", 1, 0x7C, 1, "pan"}},
-		{[]string{"pitch", "tone", "2", "coarse", "-12"}, patchParam{"tone", 2, 0x3D, 1, "coarse"}},
-		{[]string{"pitch", "tone", "2", "env", "depth", "12"}, patchParam{"tone", 2, 0x41, 1, "depth"}},
-		{[]string{"pitch", "env", "l4", "64"}, patchParam{"tone", 1, 0x4D, 1, "l4"}},
-		{[]string{"tvf", "tone", "1", "cutoff", "100"}, patchParam{"tone", 1, 0x51, 1, "cutoff"}},
-		{[]string{"tvf", "tone", "1", "envdepth", "64"}, patchParam{"tone", 1, 0x55, 1, "envdepth"}},
-		{[]string{"tvf", "tone", "4", "env", "t2", "50"}, patchParam{"tone", 4, 0x5C, 1, "t2"}},
-		{[]string{"tvf", "env", "l1", "60"}, patchParam{"tone", 1, 0x5F, 1, "l1"}},
-		{[]string{"tva", "tone", "2", "level", "110"}, patchParam{"tone", 2, 0x65, 1, "level"}},
-		{[]string{"tva", "tone", "2", "biaspoint", "60"}, patchParam{"tone", 2, 0x67, 1, "biaspoint"}},
-		{[]string{"tva", "tone", "3", "env", "t1", "40"}, patchParam{"tone", 3, 0x6E, 1, "t1"}},
-		{[]string{"tva", "env", "l3", "70"}, patchParam{"tone", 1, 0x74, 1, "l3"}},
-		{[]string{"tone", "tone", "3", "keyupper", "100"}, patchParam{"tone", 3, 0x0F, 1, "keyupper"}},
-	}
-	for _, c := range special {
-		cmds, err := parsePatchParams(c.args[0], c.args[1:])
-		if err != nil {
-			t.Errorf("parsePatchParams(%v): %v", c.args, err)
+		if len(cmds) != 1 || cmds[0].key != c.want {
+			t.Errorf("parsePatchParams(%v) = %+v, want key %q", c.args, cmds, c.want)
 			continue
 		}
-		if len(cmds) != 1 || cmds[0].param != c.want {
-			t.Errorf("parsePatchParams(%v) = %+v, want %+v", c.args, cmds, c.want)
+		// every produced key must resolve in the device layer
+		if _, err := jv1080.ResolveParam(cmds[0].key); err != nil {
+			t.Errorf("parsePatchParams(%v) produced unresolvable key %q: %v", c.args, cmds[0].key, err)
 		}
 	}
 	// Errors: unknown names, wrong blocks, missing markers.
@@ -250,18 +170,59 @@ func TestParsePatchParams(t *testing.T) {
 	}
 }
 
-func TestParsePatchValues(t *testing.T) {
-	v, err := parsePatchValues(patchParam{"common", 0, 0x2F, 1, "pan"}, []string{"l13"})
-	if err != nil || v[0] != 51 {
-		t.Errorf("parsePatchValues(pan l13) = % X, %v", v, err)
+func TestParseParamValue(t *testing.T) {
+	p, err := jv1080.ResolveParam("patch/temp/common/pan")
+	if err != nil {
+		t.Fatal(err)
 	}
-	v, err = parsePatchValues(patchParam{"tone", 1, 0x3D, 1, "coarse"}, []string{"-12"})
-	if err != nil || v[0] != 36 {
-		t.Errorf("parsePatchValues(coarse -12) = % X, %v", v, err)
+	v, err := parseParamValue(p, []string{"l13"})
+	if err != nil || v != "l13" {
+		t.Errorf("parseParamValue(pan, l13) = %v, %v", v, err)
 	}
-	v, err = parsePatchValues(patchParam{"tone", 1, 0x03, 2, "number"}, []string{"0x0C", "0x01"})
-	if err != nil || len(v) != 2 || v[0] != 0x0C || v[1] != 0x01 {
-		t.Errorf("parsePatchValues(number) = % X, %v", v, err)
+	v, err = parseParamValue(p, []string{"-13"})
+	if err != nil || v != -13 {
+		t.Errorf("parseParamValue(pan, -13) = %v, %v", v, err)
+	}
+	p, _ = jv1080.ResolveParam("patch/temp/tone/2/pitch/coarse")
+	v, err = parseParamValue(p, []string{"-12"})
+	if err != nil || v != -12 {
+		t.Errorf("parseParamValue(coarse, -12) = %v, %v", v, err)
+	}
+	p, _ = jv1080.ResolveParam("patch/temp/tone/2/number")
+	v, err = parseParamValue(p, []string{"0xC2"})
+	if err != nil || v != 194 {
+		t.Errorf("parseParamValue(number, 0xC2) = %v, %v", v, err)
+	}
+	p, _ = jv1080.ResolveParam("patch/temp/common/name")
+	v, err = parseParamValue(p, []string{"My", "Patch"})
+	if err != nil || v != "My Patch" {
+		t.Errorf("parseParamValue(name) = %v, %v", v, err)
+	}
+	// wrong value counts fail
+	p, _ = jv1080.ResolveParam("patch/temp/common/level")
+	if _, err := parseParamValue(p, []string{"1", "2"}); err == nil {
+		t.Error("parseParamValue(level, 2 values) should fail")
+	}
+}
+
+func TestFormatParamValue(t *testing.T) {
+	pan, _ := jv1080.ResolveParam("patch/temp/common/pan")
+	if got := formatParamValue(pan, -13); got != "l13 (-13)" {
+		t.Errorf("formatParamValue(pan, -13) = %q", got)
+	}
+	if got := formatParamValue(pan, 0); got != "center (0)" {
+		t.Errorf("formatParamValue(pan, 0) = %q", got)
+	}
+	if got := formatParamValue(pan, 13); got != "r13 (13)" {
+		t.Errorf("formatParamValue(pan, 13) = %q", got)
+	}
+	level, _ := jv1080.ResolveParam("patch/temp/common/level")
+	if got := formatParamValue(level, 100); got != "100" {
+		t.Errorf("formatParamValue(level, 100) = %q", got)
+	}
+	name, _ := jv1080.ResolveParam("patch/temp/common/name")
+	if got := formatParamValue(name, "Piano"); got != `"Piano"` {
+		t.Errorf("formatParamValue(name, Piano) = %q", got)
 	}
 }
 
@@ -277,6 +238,10 @@ func TestScriptReadCommandsResolve(t *testing.T) {
 		}
 		if len(cmds) != 1 {
 			t.Errorf("parsePatchParams(%v) = %d commands, want 1", cmd, len(cmds))
+			continue
+		}
+		if _, err := jv1080.ResolveParam(cmds[0].key); err != nil {
+			t.Errorf("parsePatchParams(%v) key %q does not resolve: %v", cmd, cmds[0].key, err)
 		}
 	}
 }

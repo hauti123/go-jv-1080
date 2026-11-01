@@ -65,15 +65,12 @@ func newIntegrationClient(t *testing.T) *jv1080.Client {
 	return jv1080.NewClient(dev, envHex("JV1080_DEVICE_ID", message.DefaultDeviceID))
 }
 
-// editParam describes one parameter write to verify: the block, tone,
-// offset and size (1 byte, or 2 nibble bytes for nibblized parameters)
-// within the block. label names the CLI form the write corresponds to.
+// editParam describes one parameter write to verify, addressed by its
+// device-layer key ("patch/temp/..."). label names the CLI form the write
+// corresponds to.
 type editParam struct {
-	label  string
-	block  string
-	tone   int
-	offset int
-	size   int
+	label string
+	key   string
 	// aux is an optional range [start, start+len) within the same block
 	// where additional byte changes are allowed as a side effect of the
 	// write (the device resets the 12 EFX parameters 0x0D-0x18 when the
@@ -85,10 +82,31 @@ type editParam struct {
 	setup []setupWrite
 }
 
-// setupWrite is a raw parameter write applied before an edit.
+// setupWrite is a raw parameter write applied before an edit, addressed
+// by a device-layer key.
 type setupWrite struct {
-	offset int
-	value  []byte
+	key   string
+	value []byte
+}
+
+// blockToneOffset resolves an editParam's key into its block, tone and
+// offset within the block for the patch-dump comparison.
+func blockToneOffset(e editParam) (block string, tone, offset, size int, err error) {
+	p, err := jv1080.ResolveParam(e.key)
+	if err != nil {
+		return "", 0, 0, 0, err
+	}
+	block = p.Block
+	if p.Block == "common" {
+		tone = 0
+	} else {
+		var t int
+		if _, err := fmt.Sscanf(p.Block, "tone/%d", &t); err != nil {
+			return "", 0, 0, 0, fmt.Errorf("bad block %q", p.Block)
+		}
+		tone = t
+	}
+	return block, tone, p.Offset, p.Size(), nil
 }
 
 // candidateValues returns test values for a parameter, derived from its
@@ -146,29 +164,42 @@ func candidateValues(orig []byte) [][]byte {
 // one by one and returns the first one the device accepts (reads back
 // unchanged at exactly that address). Candidates the device modifies
 // instead of accepting are reverted before the next try.
-func findAcceptedValue(t *testing.T, c *jv1080.Client, e editParam, addr message.Address, orig []byte) []byte {
+func findAcceptedValue(t *testing.T, c *jv1080.Client, e editParam, orig []byte) []byte {
 	t.Helper()
+	p, err := jv1080.ResolveParam(e.key)
+	if err != nil {
+		t.Fatalf("resolve %q: %v", e.key, err)
+	}
 	for _, cand := range candidateValues(orig) {
-		if err := c.SetPatchParameter(jv1080.BankPresetA, 0, e.block, e.tone, e.offset, cand); err != nil {
-			t.Fatalf("set parameter: %v", err)
+		ui, err := p.DecodeValue(cand)
+		if err != nil {
+			t.Fatalf("decode candidate: %v", err)
 		}
-		got, err := c.ReadRaw(addr, len(cand))
+		if err := c.SetParameter(e.key, ui); err != nil {
+			t.Fatalf("set parameter %s: %v", e.key, err)
+		}
+		got, err := c.GetParameter(e.key)
 		if err != nil {
 			t.Fatalf("read back parameter: %v", err)
 		}
-		if equalBytes(got, cand) {
+		gotBytes, err := p.EncodeValue(got)
+		if err != nil {
+			t.Fatalf("re-encode: %v", err)
+		}
+		if equalBytes(gotBytes, cand) {
 			return cand
 		}
-		if !equalBytes(got, orig) {
+		if !equalBytes(gotBytes, orig) {
 			// The device stored something else (e.g. clamped): undo
 			// before trying the next candidate.
-			if err := c.SetPatchParameter(jv1080.BankPresetA, 0, e.block, e.tone, e.offset, orig); err != nil {
+			origUI, _ := p.DecodeValue(orig)
+			if err := c.SetParameter(e.key, origUI); err != nil {
 				t.Fatalf("revert parameter: %v", err)
 			}
 		}
 	}
-	t.Fatalf("%s: device rejected every candidate value at %s offset 0x%02X (orig %v)",
-		e.label, e.block, e.offset, orig)
+	t.Fatalf("%s: device rejected every candidate value for %s (orig %v)",
+		e.label, e.key, orig)
 	return nil
 }
 
@@ -178,6 +209,10 @@ func findAcceptedValue(t *testing.T, c *jv1080.Client, e editParam, addr message
 // side effects in e.aux). The original bytes are restored afterwards.
 func verifyEdit(t *testing.T, c *jv1080.Client, e editParam) {
 	t.Helper()
+	block, tone, offset, size, err := blockToneOffset(e)
+	if err != nil {
+		t.Fatalf("resolve edit key: %v", err)
+	}
 	// Optional setup writes, reverted at the end.
 	var setupOrig [][]byte
 	if len(e.setup) > 0 {
@@ -185,26 +220,31 @@ func verifyEdit(t *testing.T, c *jv1080.Client, e editParam) {
 		if err != nil {
 			t.Fatalf("dump before setup: %v", err)
 		}
-		block := blockOf(pre, e)
+		blk := blockOf(pre, block, tone)
 		for _, s := range e.setup {
-			if s.offset+len(s.value) > len(block) {
-				t.Fatalf("setup offset 0x%02X outside block", s.offset)
+			sp, err := jv1080.ResolveParam(s.key)
+			if err != nil {
+				t.Fatalf("resolve setup key: %v", err)
 			}
-			setupOrig = append(setupOrig, append([]byte(nil), block[s.offset:s.offset+len(s.value)]...))
-			if err := c.SetPatchParameter(jv1080.BankPresetA, 0, e.block, e.tone, s.offset, s.value); err != nil {
+			if sp.Offset+len(s.value) > len(blk) {
+				t.Fatalf("setup offset 0x%02X outside block", sp.Offset)
+			}
+			setupOrig = append(setupOrig, append([]byte(nil), blk[sp.Offset:sp.Offset+len(s.value)]...))
+			sui, err := sp.DecodeValue(s.value)
+			if err != nil {
+				t.Fatalf("decode setup value: %v", err)
+			}
+			if err := c.SetParameter(s.key, sui); err != nil {
 				t.Fatalf("setup write: %v", err)
 			}
-			addr, err := jv1080.PatchParameterAddress(jv1080.BankPresetA, 0, e.block, e.tone, s.offset)
-			if err != nil {
-				t.Fatalf("setup address: %v", err)
-			}
-			got, err := c.ReadRaw(addr, len(s.value))
+			got, err := c.GetParameter(s.key)
 			if err != nil {
 				t.Fatalf("read back setup: %v", err)
 			}
-			if !equalBytes(got, s.value) {
+			gotBytes, _ := sp.EncodeValue(got)
+			if !equalBytes(gotBytes, s.value) {
 				t.Fatalf("setup write at %s offset 0x%02X not accepted (wrote %v, reads %v)",
-					e.block, s.offset, s.value, got)
+					s.key, sp.Offset, s.value, gotBytes)
 			}
 		}
 	}
@@ -212,16 +252,12 @@ func verifyEdit(t *testing.T, c *jv1080.Client, e editParam) {
 	if err != nil {
 		t.Fatalf("dump before edit: %v", err)
 	}
-	block := blockOf(before, e)
-	if e.offset+e.size > len(block) {
-		t.Fatalf("offset 0x%02X (+%d bytes) outside block (%d bytes)", e.offset, e.size, len(block))
+	blk := blockOf(before, block, tone)
+	if offset+size > len(blk) {
+		t.Fatalf("offset 0x%02X (+%d bytes) outside block (%d bytes)", offset, size, len(blk))
 	}
-	orig := append([]byte(nil), block[e.offset:e.offset+e.size]...)
-	addr, err := jv1080.PatchParameterAddress(jv1080.BankPresetA, 0, e.block, e.tone, e.offset)
-	if err != nil {
-		t.Fatalf("parameter address: %v", err)
-	}
-	value := findAcceptedValue(t, c, e, addr, orig)
+	orig := append([]byte(nil), blk[offset:offset+size]...)
+	value := findAcceptedValue(t, c, e, orig)
 	after, err := c.ReadTemporaryPatch()
 	if err != nil {
 		t.Fatalf("dump after edit: %v", err)
@@ -229,11 +265,18 @@ func verifyEdit(t *testing.T, c *jv1080.Client, e editParam) {
 	checkEdit(t, before, after, e, orig, value)
 	// Restore the original bytes immediately so the next parameter
 	// starts from the same state, then revert the setup writes.
-	if err := c.SetPatchParameter(jv1080.BankPresetA, 0, e.block, e.tone, e.offset, orig); err != nil {
+	p, err := jv1080.ResolveParam(e.key)
+	if err != nil {
+		t.Fatalf("resolve edit key: %v", err)
+	}
+	origUI, _ := p.DecodeValue(orig)
+	if err := c.SetParameter(e.key, origUI); err != nil {
 		t.Fatalf("restore parameter: %v", err)
 	}
 	for i, s := range e.setup {
-		if err := c.SetPatchParameter(jv1080.BankPresetA, 0, e.block, e.tone, s.offset, setupOrig[i]); err != nil {
+		sp, _ := jv1080.ResolveParam(s.key)
+		sui, _ := sp.DecodeValue(setupOrig[i])
+		if err := c.SetParameter(s.key, sui); err != nil {
 			t.Fatalf("revert setup: %v", err)
 		}
 	}
@@ -245,79 +288,38 @@ func verifyEdit(t *testing.T, c *jv1080.Client, e editParam) {
 // done by the test itself to verify the tone block bases.
 func integrationEdits(tone int) []editParam {
 	var edits []editParam
-	add := func(label, block string, t, offset, size int) {
-		edits = append(edits, editParam{label: label, block: block, tone: t, offset: offset, size: size})
-	}
 	if tone == 0 {
-		// Patch common block parameters. The name (12 bytes) is skipped:
-		// it is a multi-byte parameter and covered separately.
-		for name, p := range commonParams {
-			if name == "name" {
+		// Patch common block parameters, enumerated from the device
+		// layer's parameter list. The name (12 bytes) is skipped: it is
+		// a multi-byte parameter and covered separately.
+		for _, p := range jv1080.ListParams() {
+			if p.Block != "common" || p.Key == "patch/temp/common/name" {
 				continue
 			}
-			e := editParam{label: "common " + name, block: "common", tone: 0, offset: p.offset, size: p.size}
-			if p.offset == 0x0C {
+			e := editParam{label: "common " + p.Key[len("patch/temp/common/"):], key: p.Key}
+			if p.Offset == 0x0C {
 				// Changing the EFX type resets the 12 EFX parameters.
 				e.aux = [2]int{0x0D, 12}
 			}
 			edits = append(edits, e)
 		}
-		// hold/peak of control 1-3 and patch control sources 2-3.
-		for i := 1; i <= 3; i++ {
-			add(fmt.Sprintf("ctrl %d hold", i), "common", 0, commonIndexedParams["hold"].base+i, 1)
-		}
-		for i := 2; i <= 3; i++ {
-			add(fmt.Sprintf("ctrl %d src", i), "common", 0, commonIndexedParams["src"].base+i, 1)
-		}
 		return edits
 	}
 
-	// Per-Tone parameters of the given tone.
-	for name, p := range toneParams {
-		e := editParam{label: "tone " + name, block: "tone", tone: tone, offset: p.offset, size: p.size}
-		if name == "velupper" {
+	// Per-Tone parameters of the given tone, enumerated from the device
+	// layer's parameter list.
+	prefix := fmt.Sprintf("patch/temp/tone/%d/", tone)
+	for _, p := range jv1080.ListParams() {
+		if !strings.HasPrefix(p.Key, prefix) {
+			continue
+		}
+		e := editParam{label: p.Key[len("patch/temp/"):], key: p.Key}
+		if p.Key == fmt.Sprintf("patch/temp/tone/%d/velupper", tone) {
 			// The device ignores a velocity range upper below the
 			// velocity range lower; relax the lower value first.
-			e.setup = []setupWrite{{offset: 0x0C, value: []byte{1}}}
+			e.setup = []setupWrite{{key: fmt.Sprintf("patch/temp/tone/%d/vellower", tone), value: []byte{1}}}
 		}
 		edits = append(edits, e)
-	}
-	// LFO 1 and 2.
-	for lfo := 1; lfo <= 2; lfo++ {
-		for name, p := range lfoParams[lfo] {
-			add(fmt.Sprintf("lfo %d %s", lfo, name), "tone", tone, p.offset, p.size)
-		}
-	}
-	// LFO depths.
-	for name, p := range lfoDepthParams {
-		for lfo := 1; lfo <= 2; lfo++ {
-			add(fmt.Sprintf("lfo %d %s", lfo, name), "tone", tone, p.offset+lfo-1, p.size)
-		}
-	}
-	// Pitch envelope parameters.
-	for name, p := range pitchEnvParams {
-		add("pitch env "+name, "tone", tone, p.offset, p.size)
-	}
-	// TVF and TVF envelope.
-	for name, p := range tvfParams {
-		add("tvf "+name, "tone", tone, p.offset, p.size)
-	}
-	for name, p := range tvfEnvParams {
-		add("tvf env "+name, "tone", tone, p.offset, p.size)
-	}
-	// TVA and TVA envelope.
-	for name, p := range tvaParams {
-		add("tva "+name, "tone", tone, p.offset, p.size)
-	}
-	for name, p := range tvaEnvParams {
-		add("tva env "+name, "tone", tone, p.offset, p.size)
-	}
-	// Control 1-3 destinations and depths.
-	for i := 1; i <= 3; i++ {
-		for k := 1; k <= 4; k++ {
-			add(fmt.Sprintf("ctrl %d dst%d", i, k), "tone", tone, ctrlToneOffset("dst", i, k), 1)
-			add(fmt.Sprintf("ctrl %d dep%d", i, k), "tone", tone, ctrlToneOffset("dep", i, k), 1)
-		}
 	}
 	return edits
 }
@@ -369,13 +371,9 @@ func TestIntegrationPatchEditAddresses(t *testing.T) {
 	for tone := 2; tone <= 4; tone++ {
 		tone := tone
 		t.Run(fmt.Sprintf("tone %d base", tone), func(t *testing.T) {
-			const cutoffOffset = 0x51
 			verifyEdit(t, c, editParam{
-				label:  fmt.Sprintf("tone %d cutoff", tone),
-				block:  "tone",
-				tone:   tone,
-				offset: cutoffOffset,
-				size:   1,
+				label: fmt.Sprintf("tone %d cutoff", tone),
+				key:   fmt.Sprintf("patch/temp/tone/%d/tvf/cutoff", tone),
 			})
 		})
 	}
@@ -383,11 +381,11 @@ func TestIntegrationPatchEditAddresses(t *testing.T) {
 
 // blockOf returns the block (common or tone) of the patch that the edit
 // addresses.
-func blockOf(p *jv1080.Patch, e editParam) []byte {
-	if e.block == "common" {
+func blockOf(p *jv1080.Patch, block string, tone int) []byte {
+	if block == "common" {
 		return p.Common
 	}
-	return p.Tones[e.tone-1]
+	return p.Tones[tone-1]
 }
 
 // byteDiff is one changed byte between two patch dumps.
@@ -440,15 +438,19 @@ func collectDiffs(before, after *jv1080.Patch) []byteDiff {
 // e.aux.
 func checkEdit(t *testing.T, before, after *jv1080.Patch, e editParam, orig, value []byte) {
 	t.Helper()
+	block, tone, offset, _, err := blockToneOffset(e)
+	if err != nil {
+		t.Fatalf("resolve edit key: %v", err)
+	}
 	var want []byteDiff
 	for i, v := range value {
 		if v != orig[i] {
-			want = append(want, byteDiff{block: e.block, tone: e.tone, off: e.offset + i, from: orig[i], to: v})
+			want = append(want, byteDiff{block: block, tone: tone, off: offset + i, from: orig[i], to: v})
 		}
 	}
 	var unexpected []byteDiff
 	for _, d := range collectDiffs(before, after) {
-		if e.aux[1] > 0 && d.block == e.block && d.tone == e.tone &&
+		if e.aux[1] > 0 && d.block == block && d.tone == tone &&
 			d.off >= e.aux[0] && d.off < e.aux[0]+e.aux[1] {
 			continue
 		}

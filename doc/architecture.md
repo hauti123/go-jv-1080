@@ -54,18 +54,26 @@ device parameter through a path-like key string (e.g.
 Parameters are addressed with path-like keys; only the patch-mode
 temporary patch is supported for now (`patch/user/N/...` comes later):
 
-- `patch/temp/common/level` — raw 0-127
-- `patch/temp/common/pan` — UI value signed -63..+63 (0 = C), or `"C"`/`"L1".."L63"`/`"R1".."R63"`; wire 0-127 with 64 = C, both start at 0 = center
-- `patch/temp/common/octave` — UI value -3..+3 (wire 0-6)
-- `patch/temp/tone/<n>/<name>` — tone parameters, n = 1-4
-- `patch/temp/tone/<n>/pitch/t<1-4>` — pitch env times 0-127
-- `patch/temp/tone/<n>/pitch/l<1-4>` — pitch env levels -63..+63 (wire 0-126)
+- `patch/temp/common/<name>` — patch common parameters (*1-3-1)
+- `patch/temp/tone/<n>/<name>` — tone parameters directly in the tone
+  block, n = 1-4 (wave, ranges, receive switches)
+- `patch/temp/tone/<n>/<sub>/<name>` — tone sub-blocks: `efx` (output
+  routing), `ctrl<1-3>` (destinations/depths), `lfo<1-2>` (LFO and LFO
+  depths), `pitch`, `tvf`, `tva`
+
+All patch parameters of doc/patch-edit-mode-structure.md are registered;
+`jv1080.ListParams()` lists them, `jv1080.ResolveParam(key)` resolves one.
+Value kinds: raw 0-127, bipolar (signed, stored with an offset), pan
+(UI signed -64..+63 or `"C"`/`"L1".."L64"`/`"R1".."R63"`; wire 0-127
+with 64 = C), nibblized (two nibble bytes, e.g. `number`, `tempo`) and
+the 12-byte `name`.
 
 The mapping from key to SysEx address and the UI-value ↔ wire-byte
 conversion live solely in `internal/jv1080` (`params.go`; UI and wire both start at 0 = center for pan, so -1 → wire 63 = L1, +1 → wire 65 = R1),
 `Client.SetParameter`/`GetParameter`/`OnParameterChange`). The GUI glue
-layer (`cmd/jv1080-gui`) and the widgets never deal with addresses,
-offsets or raw bytes.
+layer (`cmd/jv1080-gui`), the CLI (`cmd/jv1080-cli`) and the widgets never
+deal with addresses, offsets or raw bytes; the CLI only maps its category
+syntax (`set patch tvf tone 2 cutoff 100`) onto keys.
 
 ## Data flow
 
@@ -97,13 +105,12 @@ offsets or raw bytes.
 
 1. `Knob.Layout` detects a drag/scroll, changes its value and calls
    `OnChange(value)`.
-2. The sample app calls `Controller.Set(param, []byte{value})`.
-3. `JVController` resolves the `gui.Param` (block/tone/offset, CLI name)
-   to a SysEx address for the current bank/number via
-   `jv1080.PatchParameterAddress`.
-4. `jv1080.Client.WriteRaw` sends a single DT1 with exactly one data byte
-   — only the changed parameter is transmitted, the device keeps
-   processing at a minimum.
+2. The sample app calls `jv1080.Client.SetParameter(key, uiValue)`.
+3. The device layer resolves the key to its SysEx address and encodes
+   the UI value into wire bytes (`Param.EncodeValue`).
+4. A single DT1 with exactly the parameter's data bytes is sent — only
+   the changed parameter is transmitted, the device keeps processing at
+   a minimum.
 
 **Device value changes (device → GUI):**
 

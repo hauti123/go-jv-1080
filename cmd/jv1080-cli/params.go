@@ -3,266 +3,248 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
+
+	"go-jv-1080/internal/jv1080"
 )
 
-// param describes a named parameter: its offset within its block and the
-// number of raw bytes it occupies (1, or 2 for nibblized values).
-type param struct {
-	offset int
-	size   int
+// This file maps the CLI's category syntax ("set/get patch common <param>
+// ...", "... efx tone 2 ...", ...) onto the device layer's path-like
+// parameter keys ("patch/temp/..."). It contains no offsets and no value
+// conversion: all addressing and value conversion happens in
+// internal/jv1080, and every key built here is validated through
+// jv1080.ResolveParam.
+
+// patchCommand is a parsed "set/get patch <category> ..." command: the
+// device-layer parameter key plus the index-free value arguments.
+type patchCommand struct {
+	key     string
+	valArgs []string
 }
 
-// patchParam is a patch parameter resolved from a CLI name: the block it
-// lives in ("common" or "tone"), the tone number (1-4, 0 for common), the
-// offset and size within the block, and the CLI name it was resolved from.
-type patchParam struct {
-	block  string
-	tone   int
-	offset int
-	size   int
-	name   string
+// normalize lowercases a parameter name and strips '-', '_' and spaces.
+func normalize(s string) string {
+	s = strings.ToLower(s)
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '-' || c == '_' || c == ' ' {
+			continue
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }
 
-// commonParams maps the CLI names of doc/patch-edit-mode-structure.md to
-// patch common block parameters (*1-3-1). Names must be unique only within
-// the block, not across categories. Values outside the documented range
-// are accepted on purpose (see parseValues) to allow special tests.
-var commonParams = map[string]param{
-	"name":           {0x00, 12}, // 12 character name, write raw bytes
-	"efxtype":        {0x0C, 1},  // EFX type 0-39
-	"efx":            {0x0C, 1},  // legacy alias of efxtype
-	"efxprm1":        {0x0D, 1},
-	"efxprm2":        {0x0E, 1},
-	"efxprm3":        {0x0F, 1},
-	"efxprm4":        {0x10, 1},
-	"efxprm5":        {0x11, 1},
-	"efxprm6":        {0x12, 1},
-	"efxprm7":        {0x13, 1},
-	"efxprm8":        {0x14, 1},
-	"efxprm9":        {0x15, 1},
-	"efxprm10":       {0x16, 1},
-	"efxprm11":       {0x17, 1},
-	"efxprm12":       {0x18, 1},
-	"efxout":         {0x19, 1},
-	"efxlevel":       {0x1A, 1},
-	"efxchorus":      {0x1B, 1},
-	"efxreverb":      {0x1C, 1},
-	"efxctrl1src":    {0x1D, 1},
-	"efxctrl1depth":  {0x1E, 1},
-	"efxctrl2src":    {0x1F, 1},
-	"efxctrl2depth":  {0x20, 1},
-	"choruslevel":    {0x21, 1},
-	"chorusrate":     {0x22, 1},
-	"chorusdepth":    {0x23, 1},
-	"choruspredelay": {0x24, 1},
-	"chorusfeedback": {0x25, 1},
-	"chorusout":      {0x26, 1},
-	"reverbtype":     {0x27, 1},
-	"reverblevel":    {0x28, 1},
-	"reverbtime":     {0x29, 1},
-	"hfdamp":         {0x2A, 1},
-	"reverbfeedback": {0x2B, 1},
-	"tempo":          {0x2C, 2}, // default tempo 20-250, nibblized
-	"level":          {0x2E, 1}, // patch level 0-127
-	"patchlevel":     {0x2E, 1}, // legacy alias of level
-	"pan":            {0x2F, 1}, // patch pan 0-127, 64 = center; l13/r13 forms
-	"patchpan":       {0x2F, 1}, // legacy alias of pan
-	"analogfeel":     {0x30, 1},
-	"bendup":         {0x31, 1},
-	"benddown":       {0x32, 1},
-	"assign":         {0x33, 1},
-	"legato":         {0x34, 1},
-	"portamento":     {0x35, 1},
-	"portmode":       {0x36, 1},
-	"porttype":       {0x37, 1},
-	"portstart":      {0x38, 1},
-	"porttime":       {0x39, 1},
-	"efxhold":        {0x3C, 1},
-	"velrange":       {0x40, 1},
-	"octave":         {0x41, 1},
-	"stretch":        {0x42, 1},
-	"priority":       {0x43, 1},
-	"struct12":       {0x44, 1},
-	"booster12":      {0x45, 1},
-	"struct34":       {0x46, 1},
-	"booster34":      {0x47, 1},
+// paramAliases maps legacy CLI names to the canonical device-layer names.
+var paramAliases = map[string]string{
+	"efx":        "efxtype",
+	"patchlevel": "level",
+	"patchpan":   "pan",
+	"wavenumber": "number",
+	"wave":       "number",
+	"wavegroup":  "group",
 }
 
-// commonIndexedParams maps the CLI names of patch common parameters that
-// need a control index in the command (hold/peak of control 1-3, patch
-// control source 2-3) to their base offset; the index is added to it.
-var commonIndexedParams = map[string]struct {
-	base  int
-	min   int
-	max   int
-	usage string
-}{
-	"hold": {0x3C, 1, 3, "set patch ctrl <1-3> hold <val>"},
-	"src":  {0x38, 2, 3, "set patch ctrl <2-3> src <val>"},
+// aliasName resolves legacy aliases.
+func aliasName(name string) string {
+	if a, ok := paramAliases[name]; ok {
+		return a
+	}
+	return name
 }
 
-// toneParams maps the CLI names of doc/patch-edit-mode-structure.md to
-// patch tone block parameters (*1-3-2).
-var toneParams = map[string]param{
-	"switch":       {0x00, 1}, // tone on/off 0-1
-	"group":        {0x01, 1}, // wave group type 0-2 (INT, PCM card, EXP)
-	"waveGroup":    {0x01, 1}, // legacy alias of group
-	"groupid":      {0x02, 1}, // wave group ID
-	"number":       {0x03, 2}, // wave number 1-255 (raw 0-254), nibblized
-	"wavenumber":   {0x03, 2},
-	"wave":         {0x03, 2}, // legacy alias of number
-	"gain":         {0x05, 1}, // wave gain -6..+6 dB (raw 58..70)
-	"fxmswitch":    {0x06, 1},
-	"fxmcolor":     {0x07, 1},
-	"fxmdepth":     {0x08, 1},
-	"delaymode":    {0x09, 1},
-	"delaytime":    {0x0A, 1},
-	"velfade":      {0x0B, 1},
-	"vellower":     {0x0C, 1},
-	"velupper":     {0x0D, 1},
-	"keylower":     {0x0E, 1},
-	"keyupper":     {0x0F, 1},
-	"redamper":     {0x10, 1},
-	"rxvolume":     {0x11, 1},
-	"rxhold":       {0x12, 1},
-	"rxbend":       {0x13, 1},
-	"rxpan":        {0x14, 1},
-	"coarse":       {0x3D, 1}, // coarse tune -48..+48
-	"fine":         {0x3E, 1}, // fine tune -50..+50
-	"random":       {0x3F, 1},
-	"keyfollow":    {0x40, 1}, // pitch keyfollow
-	"level":        {0x65, 1}, // tone level 0-127
-	"pan":          {0x77, 1}, // tone pan 0-127, 64 = center
-	"bias":         {0x68, 1},
-	"biaspoint":    {0x67, 1},
-	"biasdir":      {0x66, 1},
-	"pankeyfollow": {0x78, 1},
-	"randompan":    {0x79, 1},
-	"altpan":       {0x7A, 1},
-	"output":       {0x7D, 1},
-	"outputlevel":  {0x7E, 1},
-	"chorus":       {0x7F, 1}, // chorus send 0-127
-	"reverb":       {0x80, 1}, // reverb send 0-127 (address 01 00)
+// resolveKey validates a parameter key through the device layer.
+func resolveKey(key string) error {
+	_, err := jv1080.ResolveParam(key)
+	return err
 }
 
-// lfoParams holds the CLI names of the LFO1/LFO2 parameters per LFO
-// (index 1 or 2) within a patch tone block.
-var lfoParams = [3]map[string]param{
-	1: {
-		"wave":     {0x2D, 1},
-		"keytrig":  {0x2E, 1},
-		"rate":     {0x2F, 1},
-		"offset":   {0x30, 1},
-		"delay":    {0x31, 1},
-		"fade":     {0x32, 1},
-		"fadetime": {0x33, 1},
-		"sync":     {0x34, 1},
-	},
-	2: {
-		"wave":     {0x35, 1},
-		"keytrig":  {0x36, 1},
-		"rate":     {0x37, 1},
-		"offset":   {0x38, 1},
-		"delay":    {0x39, 1},
-		"fade":     {0x3A, 1},
-		"fadetime": {0x3B, 1},
-		"sync":     {0x3C, 1},
-	},
+// parseToneArg parses a "tone <1-4>" selector prefix.
+func parseToneArg(rest []string) (tone int, restOut []string, selected bool, err error) {
+	if len(rest) >= 2 && rest[0] == "tone" {
+		n, e := strconv.Atoi(rest[1])
+		if e != nil || n < 1 || n > 4 {
+			return 0, nil, false, fmt.Errorf("invalid tone %q (want 1-4)", rest[1])
+		}
+		return n, rest[2:], true, nil
+	}
+	return 1, rest, false, nil
 }
 
-// lfoDepthParams maps the LFO depth 1:2 CLI names (pitch, filter, amp, pan)
-// to their base offsets within the patch tone block; the LFO index minus 1
-// is added to the base.
-var lfoDepthParams = map[string]param{
-	"pitch":  {0x4E, 1},
-	"filter": {0x63, 1},
-	"amp":    {0x75, 1},
-	"pan":    {0x7B, 1},
+// parseCommon parses: <param> <values...>
+func parseCommon(args []string) ([]patchCommand, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("usage: set/get patch common <param> <values...>")
+	}
+	name := aliasName(normalize(args[0]))
+	key := "patch/temp/common/" + name
+	if err := resolveKey(key); err != nil {
+		return nil, fmt.Errorf("unknown common parameter %q", args[0])
+	}
+	return []patchCommand{{key: key, valArgs: args[1:]}}, nil
 }
 
-// pitchEnvParams maps the CLI names of the pitch envelope parameters (PCH
-// ENV DPT, PCH TIME ENV, PCH ENVELOPE) within a patch tone block.
-var pitchEnvParams = map[string]param{
-	"depth":     {0x41, 1},
-	"velsense":  {0x42, 1},
-	"vt1":       {0x43, 1},
-	"vt4":       {0x44, 1},
-	"keyfollow": {0x45, 1},
-	"t1":        {0x46, 1},
-	"t2":        {0x47, 1},
-	"t3":        {0x48, 1},
-	"t4":        {0x49, 1},
-	"l1":        {0x4A, 1},
-	"l2":        {0x4B, 1},
-	"l3":        {0x4C, 1},
-	"l4":        {0x4D, 1},
+// efxToneNames are the per-Tone OUTPUT parameter names of the EFFECTS
+// category.
+var efxToneNames = map[string]bool{
+	"output": true, "outputlevel": true, "chorus": true, "reverb": true,
 }
 
-// tvfParams maps the CLI names of the TVF parameters (FILTER, TVF
-// VELOCITY) within a patch tone block.
-var tvfParams = map[string]param{
-	"filtertype":      {0x50, 1},
-	"cutoff":          {0x51, 1},
-	"cutoffkeyfollow": {0x52, 1},
-	"resonance":       {0x53, 1},
-	"velres":          {0x54, 1},
-	"envdepth":        {0x55, 1},
-	"velcurve":        {0x56, 1},
-	"velsens":         {0x57, 1},
+// efxCommonExcluded are common-block names that are not EFX parameters
+// and must not be accepted without a tone selector in the efx category
+// (e.g. level lives in the common block but belongs to the patch common,
+// not the effects).
+var efxCommonExcluded = map[string]bool{
+	"level": true, "pan": true, "name": true, "tempo": true,
+	"analogfeel": true, "bendup": true, "benddown": true, "assign": true,
+	"legato": true, "portamento": true, "portmode": true, "porttype": true,
+	"portstart": true, "porttime": true, "velrange": true, "octave": true,
+	"stretch": true, "priority": true, "struct12": true, "booster12": true,
+	"struct34": true, "booster34": true,
+	"ctrl1hold": true, "ctrl2hold": true, "ctrl3hold": true,
+	"ctrl2src": true, "ctrl3src": true,
 }
 
-// tvfEnvParams maps the CLI names of the TVF envelope parameters (TVF TIME
-// ENV, TVF ENVELOPE) within a patch tone block.
-var tvfEnvParams = map[string]param{
-	"vt1":       {0x58, 1},
-	"vt4":       {0x59, 1},
-	"keyfollow": {0x5A, 1},
-	"t1":        {0x5B, 1},
-	"t2":        {0x5C, 1},
-	"t3":        {0x5D, 1},
-	"t4":        {0x5E, 1},
-	"l1":        {0x5F, 1},
-	"l2":        {0x60, 1},
-	"l3":        {0x61, 1},
-	"l4":        {0x62, 1},
+const efxUsage = "usage: set/get patch efx [tone <1-4>] <param> <val>"
+
+// parseEfx parses: [tone <1-4>] <param> <val>. Without a tone selector the
+// parameter lives in the patch common block (EFX/chorus/reverb), with a
+// tone selector in the per-Tone output routing (tone/<n>/efx/...).
+func parseEfx(args []string) ([]patchCommand, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("%s", efxUsage)
+	}
+	tone, rest, toneSelected, err := parseToneArg(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(rest) < 1 {
+		return nil, fmt.Errorf("%s", efxUsage)
+	}
+	name := aliasName(normalize(rest[0]))
+	if !toneSelected {
+		if efxCommonExcluded[name] {
+			return nil, fmt.Errorf("unknown efx parameter %q (common EFX parameters take no tone; per-Tone: output, outputlevel, chorus, reverb)", rest[0])
+		}
+		key := "patch/temp/common/" + name
+		if err := resolveKey(key); err != nil {
+			return nil, fmt.Errorf("unknown efx parameter %q (common EFX parameters take no tone; per-Tone: output, outputlevel, chorus, reverb)", rest[0])
+		}
+		return []patchCommand{{key: key, valArgs: rest[1:]}}, nil
+	}
+	if !efxToneNames[name] {
+		return nil, fmt.Errorf("unknown efx tone parameter %q (want output, outputlevel, chorus, reverb; common EFX parameters take no tone: set patch efx <param> <val>)", rest[0])
+	}
+	key := fmt.Sprintf("patch/temp/tone/%d/efx/%s", tone, name)
+	if err := resolveKey(key); err != nil {
+		return nil, fmt.Errorf("unknown efx tone parameter %q", rest[0])
+	}
+	return []patchCommand{{key: key, valArgs: rest[1:]}}, nil
 }
 
-// tvfEnvOffsets are the offsets of the TVF envelope parameters
-// t1, t2, t3, t4, l1, l2, l3, l4 within the tone block.
-var tvfEnvOffsets = [8]int{0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x61, 0x62}
-
-// tvaParams maps the CLI names of the TVA parameters (TVA, BIAS, PAN
-// MODULATION) within a patch tone block.
-var tvaParams = map[string]param{
-	"level":        {0x65, 1},
-	"pan":          {0x77, 1},
-	"envvel":       {0x6A, 1},
-	"envcurve":     {0x69, 1},
-	"bias":         {0x68, 1},
-	"biaspoint":    {0x67, 1},
-	"biasdir":      {0x66, 1},
-	"pankeyfollow": {0x78, 1},
-	"randompan":    {0x79, 1},
-	"altpan":       {0x7A, 1},
+// pitchToneNames are the PITCH parameters that need no env marker.
+var pitchToneNames = map[string]bool{
+	"coarse": true, "fine": true, "random": true, "keyfollow": true,
 }
 
-// tvaEnvParams maps the CLI names of the TVA envelope parameters (TVA TIME
-// ENV, TVA ENVELOPE) within a patch tone block.
-var tvaEnvParams = map[string]param{
-	"vt1":       {0x6B, 1},
-	"vt4":       {0x6C, 1},
-	"keyfollow": {0x6D, 1},
-	"t1":        {0x6E, 1},
-	"t2":        {0x6F, 1},
-	"t3":        {0x70, 1},
-	"t4":        {0x71, 1},
-	"l1":        {0x72, 1},
-	"l2":        {0x73, 1},
-	"l3":        {0x74, 1},
+// pitchEnvNames are the PCH ENV DPT / PCH TIME ENV / PCH ENVELOPE
+// parameters (env marker).
+var pitchEnvNames = map[string]bool{
+	"depth": true, "velsense": true, "vt1": true, "vt4": true, "keyfollow": true,
+	"t1": true, "t2": true, "t3": true, "t4": true,
+	"l1": true, "l2": true, "l3": true, "l4": true,
+}
+
+// tvfNames are the FILTER / TVF VELOCITY parameters (no env marker).
+var tvfNames = map[string]bool{
+	"filtertype": true, "cutoff": true, "cutoffkeyfollow": true, "resonance": true,
+	"velres": true, "envdepth": true, "velcurve": true, "velsens": true,
+}
+
+// tvfEnvNames are the TVF TIME ENV / TVF ENVELOPE parameters (env marker).
+var tvfEnvNames = map[string]bool{
+	"vt1": true, "vt4": true, "keyfollow": true,
+	"t1": true, "t2": true, "t3": true, "t4": true,
+	"l1": true, "l2": true, "l3": true, "l4": true,
+}
+
+// tvaNames are the TVA / BIAS / PAN MODULATION parameters (no env marker).
+var tvaNames = map[string]bool{
+	"level": true, "pan": true, "envvel": true, "envcurve": true,
+	"bias": true, "biaspoint": true, "biasdir": true,
+	"pankeyfollow": true, "randompan": true, "altpan": true,
+}
+
+// tvaEnvNames are the TVA TIME ENV / TVA ENVELOPE parameters (env marker).
+var tvaEnvNames = map[string]bool{
+	"vt1": true, "vt4": true, "keyfollow": true,
+	"t1": true, "t2": true, "t3": true, "t4": true,
+	"l1": true, "l2": true, "l3": true,
+}
+
+// parseToneCategory parses the [tone <n>] [env] <param> <val> form shared
+// by the pitch, tvf and tva categories and maps it onto
+// patch/temp/tone/<n>/<cat>/<param>.
+func parseToneCategory(cat string, args []string) ([]patchCommand, error) {
+	usage := fmt.Sprintf("usage: set/get patch %s [tone <1-4>] [env] <param> <val>", cat)
+	if len(args) < 1 {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	tone, rest, _, err := parseToneArg(args)
+	if err != nil {
+		return nil, err
+	}
+	env := false
+	if len(rest) >= 1 && rest[0] == "env" {
+		env = true
+		rest = rest[1:]
+	}
+	if len(rest) < 1 {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	name := normalize(rest[0])
+	var allowed map[string]bool
+	switch cat {
+	case "pitch":
+		if env {
+			allowed = pitchEnvNames
+		} else {
+			allowed = pitchToneNames
+		}
+	case "tvf":
+		if env {
+			allowed = tvfEnvNames
+		} else {
+			allowed = tvfNames
+		}
+	case "tva":
+		if env {
+			allowed = tvaEnvNames
+		} else {
+			allowed = tvaNames
+		}
+	}
+	if env && name == "keyfollow" && allowed["keyfollow"] {
+		// env keyfollow is the time keyfollow of the envelope, distinct
+		// from the plain keyfollow of the same category
+		name = "envkeyfollow"
+	}
+	if !allowed[name] && !(env && name == "envkeyfollow" && allowed["keyfollow"]) {
+		if env {
+			return nil, fmt.Errorf("unknown %s env parameter %q", cat, rest[0])
+		}
+		return nil, fmt.Errorf("unknown %s parameter %q (env parameters need the env marker: set/get patch %s [tone <1-4>] env <param> <val>)", cat, rest[0], cat)
+	}
+	key := fmt.Sprintf("patch/temp/tone/%d/%s/%s", tone, cat, name)
+	if err := resolveKey(key); err != nil {
+		return nil, fmt.Errorf("unknown %s parameter %q", cat, rest[0])
+	}
+	return []patchCommand{{key: key, valArgs: rest[1:]}}, nil
 }
 
 // ctrlToneNames are the per-Tone receive-switch names of the CONTROL
-// category (RxSWITCH / DAMPER).
+// category (RxSWITCH / DAMPER), living directly in the tone block.
 var ctrlToneNames = map[string]bool{
 	"redamper": true, "rxvolume": true, "rxhold": true,
 	"rxbend": true, "rxpan": true,
@@ -275,130 +257,299 @@ var ctrlToneIndexedNames = map[string]bool{
 	"dep1": true, "dep2": true, "dep3": true, "dep4": true,
 }
 
-// ctrlToneOffset returns the offset of a CONTROL 1-3 destination or depth
-// parameter within a patch tone block: controller i (1-3), destination or
-// depth number k (1-4).
-func ctrlToneOffset(name string, i, k int) int {
-	base := 0x15 + (i-1)*8 + (k-1)*2
-	if strings016(name, "dep") {
-		return base + 1
+// parseCtrl parses the CONTROL category forms:
+//
+//	set/get patch ctrl <param> <val>                     (common, no index)
+//	set/get patch ctrl <2-3> src <val>                   (common, index)
+//	set/get patch ctrl <1-3> hold <val>                  (common, index)
+//	set/get patch ctrl tone <1-4> <param> <val>          (per-Tone RxSWITCH)
+//	set/get patch ctrl <1-3> tone <1-4> <dst|dep><1-4> <val>
+func parseCtrl(args []string) ([]patchCommand, error) {
+	const usage = "usage: set/get patch ctrl [<1-3>] [tone <1-4>] <param> <val>"
+	if len(args) < 2 {
+		return nil, fmt.Errorf("%s", usage)
 	}
-	return base
-}
-
-func strings016(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+	// Control 1-3 per-Tone form: <1-3> tone <1-4> <dst|dep><1-4> [<val>].
+	if len(args) >= 4 && args[1] == "tone" {
+		i, err := strconv.Atoi(args[0])
+		if err != nil || i < 1 || i > 3 {
+			return nil, fmt.Errorf("invalid control index %q (want 1-3)", args[0])
+		}
+		tone, err := strconv.Atoi(args[2])
+		if err != nil || tone < 1 || tone > 4 {
+			return nil, fmt.Errorf("invalid tone %q (want 1-4)", args[2])
+		}
+		name := normalize(args[3])
+		if !ctrlToneIndexedNames[name] {
+			return nil, fmt.Errorf("unknown ctrl parameter %q (want dst1-dst4 or dep1-dep4)", args[3])
+		}
+		key := fmt.Sprintf("patch/temp/tone/%d/ctrl%d/%s", tone, i, name)
+		if err := resolveKey(key); err != nil {
+			return nil, fmt.Errorf("unknown ctrl parameter %q", args[3])
+		}
+		return []patchCommand{{key: key, valArgs: args[4:]}}, nil
+	}
+	// Common forms first: plain name or <index> hold|src.
+	if args[0] != "tone" {
+		if len(args) >= 2 && (args[1] == "hold" || args[1] == "src") {
+			n, err := strconv.Atoi(args[0])
+			if err != nil {
+				return nil, fmt.Errorf("invalid control index %q", args[0])
+			}
+			var key string
+			if args[1] == "hold" {
+				if n < 1 || n > 3 {
+					return nil, fmt.Errorf("control index %d out of range for %q (want 1-3; usage: set patch ctrl <1-3> hold <val>)", n, args[1])
+				}
+				key = fmt.Sprintf("patch/temp/common/ctrl%dhold", n)
+			} else {
+				if n < 2 || n > 3 {
+					return nil, fmt.Errorf("control index %d out of range for %q (want 2-3; usage: set patch ctrl <2-3> src <val>)", n, args[1])
+				}
+				key = fmt.Sprintf("patch/temp/common/ctrl%dsrc", n)
+			}
+			if err := resolveKey(key); err != nil {
+				return nil, err
+			}
+			return []patchCommand{{key: key, valArgs: args[2:]}}, nil
+		}
+		name := normalize(args[0])
+		if ctrlToneNames[name] || ctrlToneIndexedNames[name] {
+			return nil, fmt.Errorf("parameter %q needs a tone selector: set patch ctrl [ctrl <1-3>] tone <1-4> %s <val>", args[0], args[0])
+		}
+		key := "patch/temp/common/" + aliasName(name)
+		if err := resolveKey(key); err != nil {
+			return nil, fmt.Errorf("unknown common parameter %q", args[0])
+		}
+		return []patchCommand{{key: key, valArgs: args[1:]}}, nil
+	}
+	// Per-Tone RxSWITCH form: tone <1-4> <param> [<val>].
+	if len(args) < 3 {
+		return nil, fmt.Errorf("usage: set/get patch ctrl tone <1-4> <param> [<val>]")
+	}
+	tone, err := strconv.Atoi(args[1])
+	if err != nil || tone < 1 || tone > 4 {
+		return nil, fmt.Errorf("invalid tone %q (want 1-4)", args[1])
+	}
+	name := normalize(args[2])
+	if !ctrlToneNames[name] {
+		if ctrlToneIndexedNames[name] {
+			return nil, fmt.Errorf("parameter %q needs a control index: set patch ctrl <1-3> tone <1-4> %s <val>", args[2], args[2])
+		}
+		return nil, fmt.Errorf("unknown ctrl tone parameter %q (want redamper, rxvolume, rxhold, rxbend, rxpan or dst1-4, dep1-4)", args[2])
+	}
+	key := fmt.Sprintf("patch/temp/tone/%d/%s", tone, name)
+	if err := resolveKey(key); err != nil {
+		return nil, fmt.Errorf("unknown ctrl tone parameter %q", args[2])
+	}
+	return []patchCommand{{key: key, valArgs: args[3:]}}, nil
 }
 
 // waveNames are the WAVE category parameter names (tone switch, wave
-// group/number/gain, FXM, tone delay).
+// group/number/gain, FXM, tone delay), living directly in the tone block.
 var waveNames = map[string]bool{
 	"switch": true, "group": true, "groupid": true, "number": true,
-	"wavenumber": true, "wave": true, "gain": true, "fxmswitch": true,
+	"gain": true, "fxmswitch": true,
 	"fxmcolor": true, "fxmdepth": true, "delaymode": true, "delaytime": true,
 }
 
-func lookupCommon(name string) (patchParam, error) {
-	p, ok := commonParams[normalize(name)]
-	if !ok {
-		return patchParam{}, fmt.Errorf("unknown common parameter %q", name)
+// parseWave parses: [tone <1-4>] <param> <val>.
+func parseWave(args []string) ([]patchCommand, error) {
+	const usage = "usage: set/get patch wave [tone <1-4>] <param> <val>"
+	if len(args) < 1 {
+		return nil, fmt.Errorf("%s", usage)
 	}
-	return patchParam{block: "common", offset: p.offset, size: p.size, name: normalize(name)}, nil
-}
-
-func lookupCommonIndexed(name string, index int) (patchParam, error) {
-	c, ok := commonIndexedParams[normalize(name)]
-	if !ok {
-		return patchParam{}, fmt.Errorf("unknown common parameter %q", name)
-	}
-	if index < c.min || index > c.max {
-		return patchParam{}, fmt.Errorf("control index %d out of range for %q (want %d-%d; usage: %s)", index, name, c.min, c.max, c.usage)
-	}
-	return patchParam{block: "common", offset: c.base + index, size: 1, name: normalize(name)}, nil
-}
-
-func lookupTone(name string, tone int) (patchParam, error) {
-	p, ok := toneParams[normalize(name)]
-	if !ok {
-		return patchParam{}, fmt.Errorf("unknown tone parameter %q", name)
-	}
-	if tone < 1 || tone > 4 {
-		return patchParam{}, fmt.Errorf("invalid tone %d (want 1-4)", tone)
-	}
-	return patchParam{block: "tone", tone: tone, offset: p.offset, size: p.size, name: normalize(name)}, nil
-}
-
-func commonParam(name string) (offset, size int, err error) {
-	p, err := lookupCommon(name)
+	tone, rest, _, err := parseToneArg(args)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
-	return p.offset, p.size, nil
+	if len(rest) < 1 {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	name := aliasName(normalize(rest[0]))
+	if !waveNames[name] {
+		return nil, fmt.Errorf("unknown wave parameter %q (want switch, group, groupid, number, gain, fxmswitch, fxmcolor, fxmdepth, delaymode, delaytime)", rest[0])
+	}
+	key := fmt.Sprintf("patch/temp/tone/%d/%s", tone, name)
+	if err := resolveKey(key); err != nil {
+		return nil, fmt.Errorf("unknown wave parameter %q", rest[0])
+	}
+	return []patchCommand{{key: key, valArgs: rest[1:]}}, nil
 }
 
-func toneParam(name string) (offset, size int, err error) {
-	p, err := lookupTone(name, 1)
+// lfoParamNames are the LFO1/LFO2 parameter names.
+var lfoParamNames = map[string]bool{
+	"wave": true, "keytrig": true, "rate": true, "offset": true,
+	"delay": true, "fade": true, "fadetime": true, "sync": true,
+}
+
+// lfoDepthNames are the LFO depth 1:2 destination names.
+var lfoDepthNames = map[string]bool{
+	"pitch": true, "filter": true, "amp": true, "pan": true,
+}
+
+// parseLFO parses the LFO category forms:
+//
+//	set/get patch lfo <1-2> tone <1-4> <param> <val>   (LFO1/LFO2)
+//	set/get patch lfo <1-2> <param> <val>              (LFO depth 1:2, tone 1)
+func parseLFO(args []string) ([]patchCommand, error) {
+	const usage = "usage: set/get patch lfo <1-2> [tone <1-4>] <param> <val>"
+	if len(args) < 1 {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil || n < 1 || n > 2 {
+		return nil, fmt.Errorf("invalid LFO number %q (want 1 or 2)", args[0])
+	}
+	rest := args[1:]
+	if len(rest) >= 2 && rest[0] == "tone" {
+		t, err := strconv.Atoi(rest[1])
+		if err != nil || t < 1 || t > 4 {
+			return nil, fmt.Errorf("invalid tone %q (want 1-4)", rest[1])
+		}
+		if len(rest) < 3 {
+			return nil, fmt.Errorf("usage: set/get patch lfo <1-2> tone <1-4> <param> <val>")
+		}
+		name := normalize(rest[2])
+		if !lfoParamNames[name] {
+			return nil, fmt.Errorf("unknown lfo parameter %q (want wave, keytrig, rate, offset, delay, fade, fadetime, sync)", rest[2])
+		}
+		key := fmt.Sprintf("patch/temp/tone/%d/lfo%d/%s", t, n, name)
+		if err := resolveKey(key); err != nil {
+			return nil, fmt.Errorf("unknown lfo parameter %q", rest[2])
+		}
+		return []patchCommand{{key: key, valArgs: rest[3:]}}, nil
+	}
+	if len(rest) < 1 {
+		return nil, fmt.Errorf("usage: set/get patch lfo <1-2> <param> <val>")
+	}
+	name := normalize(rest[0])
+	if !lfoDepthNames[name] {
+		return nil, fmt.Errorf("unknown lfo depth parameter %q (want pitch, filter, amp, pan)", rest[0])
+	}
+	key := fmt.Sprintf("patch/temp/tone/1/lfo%d/%s", n, name)
+	if err := resolveKey(key); err != nil {
+		return nil, fmt.Errorf("unknown lfo depth parameter %q", rest[0])
+	}
+	return []patchCommand{{key: key, valArgs: rest[1:]}}, nil
+}
+
+// toneRangeNames are the per-Tone Velocity range and Key range parameter
+// names, living directly in the tone block.
+var toneRangeNames = map[string]bool{
+	"vellower": true, "velupper": true, "velfade": true,
+	"keylower": true, "keyupper": true,
+}
+
+// parsePatchTone parses: tone <1-4> <param> <val>.
+func parsePatchTone(args []string) ([]patchCommand, error) {
+	const usage = "usage: set/get patch tone <1-4> <param> <val>"
+	if len(args) < 3 || args[0] != "tone" {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	tone, err := strconv.Atoi(args[1])
+	if err != nil || tone < 1 || tone > 4 {
+		return nil, fmt.Errorf("invalid tone %q (want 1-4)", args[1])
+	}
+	name := normalize(args[2])
+	if !toneRangeNames[name] {
+		return nil, fmt.Errorf("unknown tone parameter %q (want vellower, velupper, velfade, keylower, keyupper)", args[2])
+	}
+	key := fmt.Sprintf("patch/temp/tone/%d/%s", tone, name)
+	if err := resolveKey(key); err != nil {
+		return nil, fmt.Errorf("unknown tone parameter %q", args[2])
+	}
+	return []patchCommand{{key: key, valArgs: args[3:]}}, nil
+}
+
+// parsePatchParams resolves the category-specific argument list (args are
+// the tokens after the category) to the device-layer parameter key it
+// addresses together with the value arguments.
+func parsePatchParams(cat string, args []string) ([]patchCommand, error) {
+	switch cat {
+	case "common":
+		return parseCommon(args)
+	case "efx":
+		return parseEfx(args)
+	case "pitch", "tvf", "tva":
+		return parseToneCategory(cat, args)
+	case "ctrl":
+		return parseCtrl(args)
+	case "wave":
+		return parseWave(args)
+	case "lfo":
+		return parseLFO(args)
+	case "tone":
+		return parsePatchTone(args)
+	}
+	return nil, fmt.Errorf("unknown patch category %q", cat)
+}
+
+// parseParamValue converts the CLI value arguments into the UI value for
+// the device layer: a string for the patch name, a pan string ("l13",
+// "r13", "center") or signed int for pan parameters, and a single int for
+// all other parameters (the device layer converts to wire bytes, including
+// nibblized two-byte values).
+func parseParamValue(p jv1080.Param, args []string) (any, error) {
+	switch p.Kind {
+	case jv1080.KindName:
+		if len(args) == 0 {
+			return nil, fmt.Errorf("%s: want the patch name as value", p.Key)
+		}
+		return strings.Join(args, " "), nil
+	case jv1080.KindPan:
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s: want 1 value, got %d", p.Key, len(args))
+		}
+		s := strings.ToLower(args[0])
+		if s == "center" || s == "c" || (len(s) >= 2 && (s[0] == 'l' || s[0] == 'r')) {
+			return s, nil
+		}
+		return parseValue(args[0])
+	default:
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%s: want 1 value, got %d", p.Key, len(args))
+		}
+		return parseValue(args[0])
+	}
+}
+
+// parseValue parses a decimal or hex (0x..) value, signed.
+func parseValue(s string) (int, error) {
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		n, err := strconv.ParseInt(s[2:], 16, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid value %q", s)
+		}
+		return int(n), nil
+	}
+	n, err := strconv.Atoi(s)
 	if err != nil {
-		return 0, 0, err
+		return 0, fmt.Errorf("invalid value %q", s)
 	}
-	return p.offset, p.size, nil
+	return n, nil
 }
 
-func waveParam(name string) (offset, size int, err error) {
-	if !waveNames[normalize(name)] {
-		return 0, 0, fmt.Errorf("unknown wave parameter %q (want switch, group, groupid, number, gain, fxmswitch, fxmcolor, fxmdepth, delaymode, delaytime)", name)
-	}
-	p, err := lookupTone(name, 1)
-	if err != nil {
-		return 0, 0, err
-	}
-	return p.offset, p.size, nil
-}
-
-func tvfParam(name string) (offset, size int, err error) {
-	p, ok := tvfParams[normalize(name)]
-	if !ok {
-		return 0, 0, fmt.Errorf("unknown tvf parameter %q (want filtertype, cutoff, cutoffkeyfollow, resonance, velres, envdepth, velcurve, velsens)", name)
-	}
-	return p.offset, p.size, nil
-}
-
-func normalize(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '-' || c == '_' || c == ' ' {
-			continue
+// formatParamValue formats a UI value returned by the device layer for
+// printing: pan as l/r/center notation, the name as string, everything
+// else as number.
+func formatParamValue(p jv1080.Param, v any) string {
+	switch p.Kind {
+	case jv1080.KindName:
+		if s, ok := v.(string); ok {
+			return strconv.Quote(s)
 		}
-		out = append(out, c)
-	}
-	return string(out)
-}
-
-// panValue converts pan notations to a raw pan byte: plain numbers 0-127,
-// l1..l63 (left), r1..r63 (right) and center/c.
-func panValue(s string) (int, bool) {
-	switch s {
-	case "center", "c":
-		return 64, true
-	}
-	if len(s) >= 2 && (s[0] == 'l' || s[0] == 'r') {
-		n, err := strconv.Atoi(s[1:])
-		if err != nil || n < 1 || n > 63 {
-			return 0, false
+	case jv1080.KindPan:
+		if n, ok := v.(int); ok {
+			switch {
+			case n == 0:
+				return "center (0)"
+			case n < 0:
+				return fmt.Sprintf("l%d (%d)", -n, n)
+			default:
+				return fmt.Sprintf("r%d (%d)", n, n)
+			}
 		}
-		if s[0] == 'l' {
-			return 64 - n, true
-		}
-		return 64 + n, true
 	}
-	return 0, false
-}
-
-// min returns the smaller of two ints.
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return fmt.Sprintf("%v", v)
 }
