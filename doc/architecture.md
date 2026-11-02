@@ -8,16 +8,23 @@ device parameter through a path-like key string (e.g.
 (`internal/jv1080`). This keeps the widget code testable and reusable.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  cmd/jv1080-gui (sample app)                                  │
-│  • creates the Gio window and the three knobs                 │
-│    (level / pan / octave, bound to "patch/temp/common/...")   │
-│  • knob.OnChange → client.SetParameter(key, uiValue)          │
-│  • client.OnParameterChange → knob.Set(uiValue)               │
-└───────────────┬──────────────────────────────────────────────┘
-                │ uses (knob.Key strings only, no addresses)
+┌───────────────────────────────────────────────────────────────┐
+│  cmd/jv1080-gui (thin command)                                │
+│  • flags, MIDI device, raw MIDI logging (LOG_MIDI_RX/TX)      │
+│  • gui.NewApp() → SetDevice(client) → Main()                  │
+└──────────────────────────┬────────────────────────────────────┘
+                │ uses
                 ▼
-┌───────────────────────────────┐
+┌───────────────────────────────────────────────────────────────┐
+│  internal/gui (app layer)                                     │
+│  • App: Gio window, event loop, status line, current screen   │
+│  • PoC screen (poc.go): level/pan/octave knobs + pitch env,  │
+│    bound to "patch/temp/..." keys — later the patch edit      │
+│    screen; widget.OnChange → client.SetParameter(key, value)  │
+│  • client.OnParameterChange → screen.applyParam(key, value)   │
+└──────────────────────────┬────────────────────────────────────┘
+                │ uses (widget Key strings only, no addresses)
+                ▼
 │  internal/gui/widget (widgets)│
 │  • Knob gadget (3 styles,     │
 │    each with a Key field)     │
@@ -71,7 +78,7 @@ the 12-byte `name`.
 The mapping from key to SysEx address and the UI-value ↔ wire-byte
 conversion live solely in `internal/jv1080` (`params.go`; UI and wire both start at 0 = center for pan, so -1 → wire 63 = L1, +1 → wire 65 = R1),
 `Client.SetParameter`/`GetParameter`/`OnParameterChange`). The GUI glue
-layer (`cmd/jv1080-gui`), the CLI (`cmd/jv1080-cli`) and the widgets never
+layer (`internal/gui`), the CLI (`cmd/jv1080-cli`) and the widgets never
 deal with addresses, offsets or raw bytes; the CLI only maps its category
 syntax (`set patch tvf tone 2 cutoff 100`) onto keys.
 
@@ -81,7 +88,7 @@ syntax (`set patch tvf tone 2 cutoff 100`) onto keys.
 
 1. `Knob.Layout` detects a drag/scroll, changes its value and calls
    `OnChange(uiValue)`.
-2. The sample app calls `client.SetParameter(knob.Key, uiValue)`.
+2. The app layer (`internal/gui`) calls `client.SetParameter(widget.Key, uiValue)`.
 3. `internal/jv1080` resolves the key to a SysEx address and converts
    the UI value to wire bytes (e.g. +2 octave → 5, "L13" → 51).
 4. A single DT1 with exactly one data byte is sent — only the changed
@@ -95,7 +102,7 @@ syntax (`set patch tvf tone 2 cutoff 100`) onto keys.
 3. `internal/jv1080` maps the DT1 address back to a key, decodes the
    wire bytes into a UI value and invokes the `OnParameterChange`
    callbacks with `(key, value)`.
-4. The sample app calls `knob.Set(value)` on the knob with that key —
+4. The app layer calls `widget.Set(value)` on the widget with that key —
    only the one changed knob is updated.
 
 
@@ -133,7 +140,8 @@ syntax (`set patch tvf tone 2 cutoff 100`) onto keys.
 | `internal/midi/message` | Individual MIDI messages as structs, serializable to/from byte streams (RQ1, DT1, CC, PC, NoteOn, identity). |
 | `internal/midi/sysex`, `internal/midi/controlchange` | SysEx-level and control-change helpers on top of `message`. |
 | `internal/jv1080` | JV-1080 parameter address map, `Patch`/`Performance` models and the high-level `Client` (dumps, single reads, single-parameter writes, store). |
+| `internal/gui` | App layer: window, event loop, status line, PoC screen (`app.go`, `poc.go`); wires widgets to `jv1080.Client`. |
 | `internal/gui/widget` | GUI widgets: `Knob` (with `Key` binding), `Envelope` editor, 5x7 LED font, MK-II theme. No device imports. |
 | `internal/util` | Shared helpers: generic `Clamp[T]`, env-flag parsing (`EnvFlag`). |
-| `cmd/jv1080-gui` | Sample GUI app (level/pan/octave knobs). |
+| `cmd/jv1080-gui` | Thin command: flags, MIDI device, raw MIDI logging; starts the app (`internal/gui`). |
 | `cmd/jv1080-cli` | Command line utility for raw MIDI inspection and patch manipulation. |

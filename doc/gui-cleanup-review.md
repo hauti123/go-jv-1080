@@ -8,7 +8,10 @@ draw helpers (the mouse-to-point drag translation is unchanged),
 raw MIDI logging is gated by `LOG_MIDI_RX` / `LOG_MIDI_TX` (default on),
 all clamp helpers (gui, `internal/jv1080`, `cmd/gui-proto`) are migrated to
 `internal/util.Clamp`, `cmd/gui-proto` is kept, and the knob double-click
-reset now goes to zero (the center for pan/bipolar knobs). The smell
+reset now goes to zero (the center for pan/bipolar knobs). The app window, event loop and
+PoC screen moved from `cmd/jv1080-gui/main.go` into `internal/gui` (`app.go`, `poc.go` behind
+a `screen` interface, so the PoC can be replaced by the patch edit screen later); the command
+itself is thin now. The smell
 register below stays recorded; the items not covered above are still
 deferred to a later pass.
 
