@@ -1,7 +1,7 @@
 // Command jv1080-gui is the JV-1080 editor GUI: a thin command that opens
 // the MIDI device, wires it to the device client and starts the
-// application window. The window, layout and screens (currently the PoC
-// screen with the level/pan/octave knobs and the pitch envelope) live in
+// application window. The window, layout and the patch edit screen (a
+// COMMON tab and one tab per tone with all patch parameters) live in
 // internal/gui. Changes made with the widgets are sent to the device
 // immediately (single-parameter DT1 writes); changes made on the device
 // itself are reflected in the widgets immediately.
@@ -75,5 +75,5 @@ func main() {
 		a.SetDevice(jv1080.NewClient(dev, uint8(id)))
 	}
 
-	a.Main("JV-1080 Patch Common", unit.Dp(520), unit.Dp(460))
+	a.Main("JV-1080 Patch Editor", unit.Dp(780), unit.Dp(620))
 }

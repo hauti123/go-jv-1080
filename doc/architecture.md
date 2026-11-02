@@ -18,9 +18,9 @@ device parameter through a path-like key string (e.g.
 ┌───────────────────────────────────────────────────────────────┐
 │  internal/gui (app layer)                                     │
 │  • App: Gio window, event loop, status line, current screen   │
-│  • PoC screen (poc.go): level/pan/octave knobs + pitch env,  │
-│    bound to "patch/temp/..." keys — later the patch edit      │
-│    screen; widget.OnChange → client.SetParameter(key, value)  │
+│  • patch edit screen (patch.go): COMMON tab + TONE 1-4 tabs,  │
+│    bound to "patch/temp/..." keys; widget.OnChange →          │
+│    client.SetParameter(key, value)                            │
 │  • client.OnParameterChange → screen.applyParam(key, value)   │
 └──────────────────────────┬────────────────────────────────────┘
                 │ uses (widget Key strings only, no addresses)
@@ -28,6 +28,13 @@ device parameter through a path-like key string (e.g.
 │  internal/gui/widget (widgets)│
 │  • Knob gadget (3 styles,     │
 │    each with a Key field)     │
+│  • SwitchKnob (detented 6-    │
+│    position switch, e.g. wave │
+│    group INT-A/INT-B/EXP-A..D)│
+│  • Dropdown (scrollable list) │
+│  • Tabs (tab bar)             │
+│  • TextField (single-line     │
+│    input, e.g. patch name)    │
 │  • Envelope editor (4 points, │
 │    TimeKeys/LevelKeys)        │
 │  • MK-II style drawing +      │
@@ -140,8 +147,8 @@ syntax (`set patch tvf tone 2 cutoff 100`) onto keys.
 | `internal/midi/message` | Individual MIDI messages as structs, serializable to/from byte streams (RQ1, DT1, CC, PC, NoteOn, identity). |
 | `internal/midi/sysex`, `internal/midi/controlchange` | SysEx-level and control-change helpers on top of `message`. |
 | `internal/jv1080` | JV-1080 parameter address map, `Patch`/`Performance` models and the high-level `Client` (dumps, single reads, single-parameter writes, store). |
-| `internal/gui` | App layer: window, event loop, status line, PoC screen (`app.go`, `poc.go`); wires widgets to `jv1080.Client`. |
-| `internal/gui/widget` | GUI widgets: `Knob` (with `Key` binding), `Envelope` editor, 5x7 LED font, MK-II theme. No device imports. |
+| `internal/gui` | App layer: window, event loop, status line, patch edit screen (`app.go`, `patch.go`); wires widgets to `jv1080.Client`. |
+| `internal/gui/widget` | GUI widgets: `Knob`, `SwitchKnob`, `Dropdown`, `Tabs`, `TextField` (all with `Key` binding), `Envelope` editor, 5x7 LED font, MK-II theme. No device imports. |
 | `internal/util` | Shared helpers: generic `Clamp[T]`, env-flag parsing (`EnvFlag`). |
 | `cmd/jv1080-gui` | Thin command: flags, MIDI device, raw MIDI logging; starts the app (`internal/gui`). |
 | `cmd/jv1080-cli` | Command line utility for raw MIDI inspection and patch manipulation. |

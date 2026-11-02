@@ -16,9 +16,9 @@ import (
 	"go-jv-1080/internal/jv1080"
 )
 
-// screen is one screen of the app (the PoC screen today, a patch edit
-// screen later). A screen renders itself and applies device-originated
-// parameter updates to its widgets.
+// screen is one screen of the app (the patch edit screen). A screen
+// renders itself and applies device-originated parameter updates to its
+// widgets.
 type screen interface {
 	Layout(gtx layout.Context, th *widget.Theme) layout.Dimensions
 	applyParam(key string, value any)
@@ -48,14 +48,14 @@ type paramUpdate struct {
 	value any
 }
 
-// NewApp returns the app with the PoC screen installed.
+// NewApp returns the app with the patch edit screen installed.
 func NewApp() *App {
 	a := &App{
 		th:      widget.DefaultTheme(),
 		updates: make(chan paramUpdate, 16),
 		status:  "patch/temp",
 	}
-	a.screen = newPoC(a.send)
+	a.screen = newPatchEditor(a.send)
 	return a
 }
 
