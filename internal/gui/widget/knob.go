@@ -162,6 +162,10 @@ func (k *Knob) formatValue() string {
 // knobs can be stacked next to each other.
 const knobDp = 96
 
+// KnobDp is the nominal width and height of a Knob (and SwitchKnob) in
+// dp, including no title; the title adds another titleDp.
+const KnobDp = knobDp
+
 // titleDp is the height of the title row below the scale in dp.
 const titleDp = 10
 
