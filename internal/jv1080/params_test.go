@@ -1,6 +1,7 @@
 package jv1080
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,8 +19,20 @@ func TestResolveParamKeys(t *testing.T) {
 		{"patch/temp/common/level", message.Address{0x03, 0x00, 0x00, 0x2E}, KindRaw, 0, 127},
 		{"patch/temp/common/pan", message.Address{0x03, 0x00, 0x00, 0x2F}, KindPan, -64, 63},
 		{"patch/temp/common/octave", message.Address{0x03, 0x00, 0x00, 0x41}, KindBipolar, -3, 3},
-		{"patch/temp/tone/1/level", message.Address{0x03, 0x00, 0x10, 0x65}, KindRaw, 0, 127},
-		{"patch/temp/tone/4/cutoff", message.Address{0x03, 0x00, 0x16, 0x51}, KindRaw, 0, 127},
+		{"patch/temp/common/tempo", message.Address{0x03, 0x00, 0x00, 0x2C}, KindNibblized, 20, 250},
+		{"patch/temp/tone/1/tva/level", message.Address{0x03, 0x00, 0x10, 0x65}, KindRaw, 0, 127},
+		{"patch/temp/tone/2/tva/level", message.Address{0x03, 0x00, 0x12, 0x65}, KindRaw, 0, 127},
+		{"patch/temp/tone/4/tvf/cutoff", message.Address{0x03, 0x00, 0x16, 0x51}, KindRaw, 0, 127},
+		{"patch/temp/tone/3/number", message.Address{0x03, 0x00, 0x14, 0x03}, KindNibblized, 1, 255},
+		{"patch/temp/tone/2/lfo1/rate", message.Address{0x03, 0x00, 0x12, 0x2F}, KindRaw, 0, 127},
+		{"patch/temp/tone/4/lfo2/sync", message.Address{0x03, 0x00, 0x16, 0x3C}, KindRaw, 0, 127},
+		{"patch/temp/tone/2/lfo2/filter", message.Address{0x03, 0x00, 0x12, 0x64}, KindBipolar, -63, 63},
+		{"patch/temp/tone/1/ctrl2/dst3", message.Address{0x03, 0x00, 0x10, 0x21}, KindRaw, 0, 18},
+		{"patch/temp/tone/1/ctrl3/dep2", message.Address{0x03, 0x00, 0x10, 0x28}, KindBipolar, -63, 63},
+		{"patch/temp/common/ctrl2src", message.Address{0x03, 0x00, 0x00, 0x3A}, KindRaw, 0, 15},
+		{"patch/temp/common/ctrl3hold", message.Address{0x03, 0x00, 0x00, 0x3F}, KindRaw, 0, 2},
+		{"patch/temp/tone/4/efx/reverb", message.Address{0x03, 0x00, 0x17, 0x00}, KindRaw, 0, 127}, // offset 0x80 of tone 4 wraps to 17 00
+		{"patch/temp/tone/2/tva/pan", message.Address{0x03, 0x00, 0x12, 0x77}, KindPan, -64, 63},
 		// pitch envelope of tone 1 (third address byte 0x10)
 		{"patch/temp/tone/1/pitch/t1", message.Address{0x03, 0x00, 0x10, 0x46}, KindRaw, 0, 127},
 		{"patch/temp/tone/1/pitch/t4", message.Address{0x03, 0x00, 0x10, 0x49}, KindRaw, 0, 127},
@@ -41,7 +54,7 @@ func TestResolveParamKeys(t *testing.T) {
 }
 
 func TestResolveParamRejectsUnknown(t *testing.T) {
-	for _, key := range []string{"", "patch/user/1/common/level", "patch/temp/common/nope", "foo/bar/baz/qux", "patch/temp/common"} {
+	for _, key := range []string{"", "patch/user/1/common/level", "patch/temp/common/nope", "foo/bar/baz/qux", "patch/temp/common", "patch/temp/tone/5/tvf/cutoff", "patch/temp/tone/1/tvf/nope", "patch/temp/tone/1/lfo1/nope"} {
 		if _, err := resolveParam(key); err == nil {
 			t.Errorf("resolveParam(%q) succeeded, want error", key)
 		}
@@ -194,12 +207,15 @@ func TestTempPatchKeyAt(t *testing.T) {
 		{0x2E, "patch/temp/common/level", true},
 		{0x2F, "patch/temp/common/pan", true},
 		{0x41, "patch/temp/common/octave", true},
-		{(0x10)*0x80 + 0x65, "patch/temp/tone/1/level", true},
-		{0x0D, "", false}, // 0x0C is efxtype, a known key
+		{(0x10)*0x80 + 0x65, "patch/temp/tone/1/tva/level", true},
+		{0x0D, "patch/temp/common/efxprm1", true},
 		{-1, "", false},
 		{0x10*0x80 + 0x46, "patch/temp/tone/1/pitch/t1", true},
 		{0x10*0x80 + 0x4D, "patch/temp/tone/1/pitch/l4", true},
-		{0x16*0x80 + 0x46, "", false}, // tone 4 pitch env not registered
+		{0x16*0x80 + 0x46, "patch/temp/tone/4/pitch/t1", true},
+		{0x12*0x80 + 0x51, "patch/temp/tone/2/tvf/cutoff", true},
+		{0x10*0x80 + 0x2F, "patch/temp/tone/1/lfo1/rate", true},
+		{0x10*0x80 + 0x21, "patch/temp/tone/1/ctrl2/dst3", true},
 	}
 	for _, c := range cases {
 		key, ok := tempPatchKeyAt(c.off)
@@ -230,9 +246,11 @@ func TestHandleDeviceMessageDispatch(t *testing.T) {
 		t.Errorf("foreign device ID produced update %q", gotKey)
 	}
 
-	// DT1 at an unknown offset is ignored
+	// DT1 at an offset with no registered parameter is ignored (0x3D is
+	// between ctrl1hold 0x3D... use an offset in a gap, e.g. tone area of
+	// common block byte 0x48+ is past the common block; use 0x03 00 00 47+1)
 	ds.DeviceID = 0x10
-	ds.Address = message.Address{0x03, 0x00, 0x00, 0x30}
+	ds.Address = message.Address{0x03, 0x00, 0x00, 0x48} // just past the common block
 	c.handleDeviceMessage(ds.Bytes())
 	if gotKey != "" {
 		t.Errorf("unknown offset produced update %q", gotKey)
@@ -254,12 +272,104 @@ func TestHandleDeviceMessageDispatch(t *testing.T) {
 	}
 }
 
-func TestParamKeys(t *testing.T) {
-	keys := ParamKeys()
-	joined := strings.Join(keys, ",")
-	for _, want := range []string{"patch/temp/common/level", "patch/temp/common/pan", "patch/temp/common/octave"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("ParamKeys() missing %q", want)
+func TestListParams(t *testing.T) {
+	params := ListParams()
+	if len(params) == 0 {
+		t.Fatal("ListParams() returned no parameters")
+	}
+	joined := make([]string, 0, len(params))
+	for _, p := range params {
+		joined = append(joined, p.Key)
+	}
+	s := strings.Join(joined, ",")
+	for _, want := range []string{
+		"patch/temp/common/level", "patch/temp/common/pan", "patch/temp/common/octave",
+		"patch/temp/common/name", "patch/temp/common/tempo",
+		"patch/temp/tone/1/tva/level", "patch/temp/tone/4/tvf/cutoff",
+		"patch/temp/tone/2/lfo2/rate", "patch/temp/tone/3/ctrl1/dep4",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("ListParams() missing %q", want)
+		}
+	}
+	for _, p := range params {
+		q, err := ResolveParam(p.Key)
+		if err != nil || q.Key != p.Key || q.Kind != p.Kind || q.Offset != p.Offset {
+			t.Errorf("ResolveParam(%q) = %+v, %v; want same as listed %+v", p.Key, q, err, p)
+		}
+	}
+}
+
+func TestEncodeDecodeNibblized(t *testing.T) {
+	p, err := resolveParam("patch/temp/tone/1/number")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ui, wire := range map[int][2]byte{1: {0x00, 0x00}, 2: {0x00, 0x01}, 194: {0x0C, 0x01}, 255: {0x0F, 0x0E}} {
+		data, err := p.EncodeValue(ui)
+		if err != nil {
+			t.Fatalf("number EncodeValue(%d): %v", ui, err)
+		}
+		if data[0] != wire[0] || data[1] != wire[1] {
+			t.Errorf("number %d: wire = % X, want % X", ui, data, wire)
+		}
+		back, err := p.DecodeValue(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if back.(int) != ui {
+			t.Errorf("number decode(% X) = %v, want %d", data, back, ui)
+		}
+	}
+	if _, err := p.EncodeValue(0); err == nil {
+		t.Error("number 0: want range error")
+	}
+	if _, err := p.EncodeValue(256); err == nil {
+		t.Error("number 256: want range error")
+	}
+	p, err = resolveParam("patch/temp/common/tempo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := p.EncodeValue(120)
+	if err != nil || data[0] != 0x06 || data[1] != 0x04 {
+		t.Errorf("tempo 120: wire = % X, %v; want 06 04", data, err)
+	}
+	back, _ := p.DecodeValue(data)
+	if back.(int) != 120 {
+		t.Errorf("tempo decode = %v, want 120", back)
+	}
+}
+
+func TestToneParamsAllTones(t *testing.T) {
+	bases := map[int]int{1: 0x10, 2: 0x12, 3: 0x14, 4: 0x16}
+	for key, off := range map[string]int{
+		"patch/temp/tone/%d/tvf/cutoff": 0x51,
+		"patch/temp/tone/%d/tva/level":  0x65,
+		"patch/temp/tone/%d/pitch/l4":   0x4D,
+		"patch/temp/tone/%d/efx/reverb": 0x80,
+		"patch/temp/tone/%d/lfo1/wave":  0x2D,
+		"patch/temp/tone/%d/ctrl1/dst1": 0x15,
+		"patch/temp/tone/%d/velfade":    0x0B,
+		"patch/temp/tone/%d/rxpan":      0x14,
+		"patch/temp/tone/%d/switch":     0x00,
+		"patch/temp/tone/%d/number":     0x03,
+		"patch/temp/tone/%d/tvf/l3":     0x61,
+		"patch/temp/tone/%d/tva/l3":     0x74,
+		"patch/temp/tone/%d/lfo2/pan":   0x7C,
+		"patch/temp/tone/%d/ctrl3/dep4": 0x2C,
+	} {
+		for tone, base := range bases {
+			k := fmt.Sprintf(key, tone)
+			p, err := resolveParam(k)
+			if err != nil {
+				t.Errorf("resolveParam(%q): %v", k, err)
+				continue
+			}
+			want := TemporaryPatchArea().Add(base*0x80 + off)
+			if p.area != want {
+				t.Errorf("%s: addr = %v, want %v", p.Key, p.area, want)
+			}
 		}
 	}
 }

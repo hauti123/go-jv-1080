@@ -2,8 +2,6 @@ package jv1080
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -365,12 +363,11 @@ func (c *Client) SetPerformanceParameter(number int, block string, part int, off
 
 // SetParameter writes a single parameter addressed by its path-like key
 // (e.g. "patch/temp/common/level") to the device. The value is given as
-// entered in the UI (int for raw/bipolar parameters, "C"/"L13"/"R13" or
-// int for pan, string for the name); the conversion to wire bytes happens
-// in this package. Only single-byte parameters (and the name) are
-// supported through keys for now.
+// entered in the UI (int for raw/bipolar/nibblized parameters, "C"/"L13"/
+// "R13" or signed int for pan, string for the name); the conversion to
+// wire bytes happens in this package.
 func (c *Client) SetParameter(key string, value any) error {
-	p, err := resolveParam(key)
+	p, err := ResolveParam(key)
 	if err != nil {
 		return err
 	}
@@ -382,16 +379,13 @@ func (c *Client) SetParameter(key string, value any) error {
 }
 
 // GetParameter reads a single parameter addressed by its path-like key and
-// returns its value as entered in the UI (int, or pan/name string).
+// returns its value as entered in the UI (int, or string for the name).
 func (c *Client) GetParameter(key string) (any, error) {
-	p, err := resolveParam(key)
+	p, err := ResolveParam(key)
 	if err != nil {
 		return nil, err
 	}
-	size := 1
-	if p.Key == "patch/temp/common/name" {
-		size = 12
-	}
+	size := p.Size()
 	ds, err := c.request(p.area, size)
 	if err != nil {
 		return nil, err
@@ -399,27 +393,45 @@ func (c *Client) GetParameter(key string) (any, error) {
 	return p.DecodeValue(ds.Data)
 }
 
-// ParamKeys returns the path-like keys of all parameters known to the key
-// system (for now only the temporary patch).
-func ParamKeys() []string {
-	keys := make([]string, 0, len(tempPatchParams))
+// ListParams returns the definitions of all parameters known to the key
+// system (for now only the temporary patch), ordered as defined in the
+// parameter table.
+func ListParams() []Param {
+	params := make([]Param, 0, len(tempPatchParams))
 	for _, spec := range tempPatchParams {
-		keys = append(keys, paramKeyOf(spec))
+		p, err := resolveParam(paramKeyOf(spec))
+		if err != nil {
+			continue
+		}
+		params = append(params, p)
 	}
-	return keys
+	return params
+}
+
+// ResolveParam maps a path-like parameter key (e.g.
+// "patch/temp/tone/2/tvf/cutoff") to its parameter definition including
+// the SysEx address of its first byte. All addressing lives in this
+// package; callers use keys only.
+func ResolveParam(key string) (Param, error) {
+	return resolveParam(key)
+}
+
+// Size returns the number of wire bytes the parameter occupies (1, 2 for
+// nibblized values, 12 for the name).
+func (p Param) Size() int {
+	switch p.Kind {
+	case KindName:
+		return 12
+	case KindNibblized:
+		return 2
+	default:
+		return 1
+	}
 }
 
 // paramKeyOf renders the path-like key of a paramSpec.
 func paramKeyOf(spec paramSpec) string {
-	parts := strings.Split(spec.block, "/")
-	switch {
-	case spec.block == "common":
-		return "patch/temp/common/" + spec.name
-	case len(parts) == 2: // tone/N
-		return "patch/temp/tone/" + parts[1] + "/" + spec.name
-	default: // tone/N/<sub>
-		return "patch/temp/tone/" + parts[1] + "/" + parts[2] + "/" + spec.name
-	}
+	return "patch/temp/" + spec.block + "/" + spec.name
 }
 
 // OnParameterChange registers a callback that is invoked with the
@@ -481,17 +493,11 @@ func (c *Client) handleDeviceMessage(raw []byte) {
 func tempPatchKeyAt(off int) (string, bool) {
 	for _, spec := range tempPatchParams {
 		start := spec.offset
-		key := paramKeyOf(spec)
-		parts := strings.Split(spec.block, "/")
-		if spec.block != "common" {
-			t, err := strconv.Atoi(parts[1])
-			if err != nil || t < 1 || t > 4 {
-				continue
-			}
-			start = (0x10+2*(t-1))*0x80 + spec.offset
+		if spec.tone != 0 {
+			start = toneBaseOffsets[spec.tone-1]*0x80 + spec.offset
 		}
 		if off == start {
-			return key, true
+			return paramKeyOf(spec), true
 		}
 	}
 	return "", false
