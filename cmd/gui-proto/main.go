@@ -46,6 +46,8 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
+
+	"go-jv-1080/internal/util"
 )
 
 // ---------------------------------------------------------------------------
@@ -66,16 +68,6 @@ var scrollAll = pointer.ScrollRange{Min: -(1 << 20), Max: 1 << 20}
 
 func rgb(hex uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(hex >> 16), G: uint8(hex >> 8), B: uint8(hex), A: 0xFF}
-}
-
-func clampf(v, lo, hi float32) float32 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 func angleOf(v float32) float64 {
@@ -330,7 +322,7 @@ func (k *knob) stepSize() float32 {
 }
 
 func (k *knob) set(v float32) {
-	v = clampf(v, minVal, maxVal)
+	v = util.Clamp(v, minVal, maxVal)
 	if s := k.stepSize(); s > 0 {
 		v = float32(math.Round(float64(v/s))) * s
 	}
@@ -568,9 +560,9 @@ func (e *envelope) clampPoint(i int) {
 	if i < len(e.points)-1 {
 		next = e.points[i+1].X
 	}
-	e.points[i].X = clampf(e.points[i].X, prev+envGap, next-envGap)
-	e.points[i].X = clampf(e.points[i].X, envMinX, envMaxX)
-	e.points[i].Y = clampf(e.points[i].Y, 0, 1)
+	e.points[i].X = util.Clamp(e.points[i].X, prev+envGap, next-envGap)
+	e.points[i].X = util.Clamp(e.points[i].X, envMinX, envMaxX)
+	e.points[i].Y = util.Clamp(e.points[i].Y, 0, 1)
 }
 
 func (e *envelope) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {

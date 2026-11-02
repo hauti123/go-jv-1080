@@ -8,6 +8,7 @@ import (
 	"go-jv-1080/internal/midi"
 	"go-jv-1080/internal/midi/controlchange"
 	"go-jv-1080/internal/midi/message"
+	"go-jv-1080/internal/util"
 )
 
 // DefaultTimeout is the default time to wait for the device to answer a
@@ -67,7 +68,7 @@ func (c *Client) SelectPatch(channel uint8, bank Bank, number int) error {
 	if err := c.dev.SendMessage(controlchange.NewBankSelect(channel, msb, lsb)); err != nil {
 		return err
 	}
-	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 128) - 1)})
+	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(util.Clamp(number, 1, 128) - 1)})
 }
 
 // SelectPerformance sends bank select and program change to select a
@@ -77,7 +78,7 @@ func (c *Client) SelectPerformance(channel uint8, bank Bank, number int) error {
 	if err := c.dev.SendMessage(controlchange.NewBankSelect(channel, msb, lsb)); err != nil {
 		return err
 	}
-	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(clamp(number, 1, 32) - 1)})
+	return c.dev.SendMessage(message.ProgramChange{Channel: channel, Program: uint8(util.Clamp(number, 1, 32) - 1)})
 }
 
 // ReadPatch reads a single patch into the patch-mode temporary patch

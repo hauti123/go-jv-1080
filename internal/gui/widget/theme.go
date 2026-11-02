@@ -1,12 +1,4 @@
-// Package gui contains the widgets of the JV-1080 editor GUI: a compact
-// hardware-style knob gadget and the shared theme. The visual style follows
-// the MK-II Tone Stack example of cmd/gui-proto (metal cap + LED arc
-// scale) with green instead of amber as the accent color, and the 5x7
-// dot-matrix LED font of the DC-90 sample at half its cell size. The
-// package is deliberately independent of the MIDI/device layer;
-// applications wire the widgets to a device through their own controller
-// (see cmd/jv1080-gui).
-package gui
+package widget
 
 import "image/color"
 
@@ -18,10 +10,11 @@ const (
 	MaxAngle = 135.0
 )
 
-// LED palette of the DC-90 sample (cmd/gui-proto).
+// LED palette of the DC-90 sample (cmd/gui-proto): the single definition
+// of the LED colors, used by the theme and the 5x7 font.
 const (
-	ledLitHex = 0x39FF70 // bright green, lit dots
-	ledDimHex = 0x0B3315 // unlit dot grid
+	ledLit = 0x39FF70 // bright green, lit dots
+	ledDim = 0x0B3315 // unlit dot grid
 )
 
 // Theme holds the colors of the MK-II-style JV-1080 GUI, modeled after the
@@ -55,7 +48,7 @@ func DefaultTheme() Theme {
 		Sub:        rgb(0x8D8474),
 		Label:      rgb(0xB3A893),
 		ArcBase:    rgb(0x34302A),
-		Lit:        rgb(ledLitHex),
+		Lit:        rgb(ledLit),
 		TickBase:   rgb(0x6B655C),
 		CapTop:     rgb(0x4A4640),
 		CapBot:     rgb(0x141310),

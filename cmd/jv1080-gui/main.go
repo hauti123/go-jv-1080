@@ -18,8 +18,12 @@
 //
 // Without a connected device the app still starts and shows the knobs; the
 // knobs then just do not send anything (an error is shown in the status
-// line). The GUI talks to the device only through the gui.Controller
-// interface, keeping the widget layer independent of the MIDI layer.
+// line). The GUI talks to the device only through the jv1080.Client,
+// keeping the widget layer independent of the MIDI layer.
+//
+// Raw MIDI logging is on by default and can be disabled per direction
+// with the environment variables LOG_MIDI_RX=0 / LOG_MIDI_TX=0; widget
+// debug logging is enabled with LOG_GUI_WIDGETS=1.
 package main
 
 import (
@@ -36,7 +40,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
-	"go-jv-1080/internal/gui"
+	"go-jv-1080/internal/gui/widget"
 	"go-jv-1080/internal/jv1080"
 	"go-jv-1080/internal/midi"
 	"go-jv-1080/internal/midi/message"
@@ -74,8 +78,14 @@ func main() {
 		log.Printf("jv1080-gui: cannot open MIDI device (%v); running without device", err)
 	} else {
 		defer dev.Close()
-		// Log all raw MIDI messages sent and received in hex.
+		// Log all raw MIDI messages sent and received in hex (default on;
+		// disable per direction with LOG_MIDI_RX=0 / LOG_MIDI_TX=0).
+		logRX := midi.LogEnabled("RX")
+		logTX := midi.LogEnabled("TX")
 		dev.SetLogger(func(direction string, msg []byte) {
+			if direction == "RX" && !logRX || direction == "TX" && !logTX {
+				return
+			}
 			log.Printf("MIDI %s: [%s]", direction, message.Hex(msg))
 		})
 		id, err := strconv.ParseUint(*deviceID, 16, 8)
@@ -101,11 +111,11 @@ func main() {
 // knobs are bound to device parameters by their path-like keys; all
 // address/offset handling and value conversion happens in internal/jv1080.
 type ui struct {
-	th     gui.Theme
-	level  *gui.Knob
-	pan    *gui.Knob
-	octave *gui.Knob
-	env    *gui.Envelope
+	th     widget.Theme
+	level  *widget.Knob
+	pan    *widget.Knob
+	octave *widget.Knob
+	env    *widget.Envelope
 
 	mu      sync.Mutex
 	client  *jv1080.Client
@@ -123,17 +133,17 @@ type paramUpdate struct {
 
 func newUI() *ui {
 	u := &ui{
-		th:      gui.DefaultTheme(),
+		th:      widget.DefaultTheme(),
 		updates: make(chan paramUpdate, 16),
 		status:  "patch/temp",
 	}
-	u.level = gui.NewKnob(gui.KnobMinMax, "LEVEL", keyLevel, 0, 127)
-	u.pan = gui.NewKnob(gui.KnobPan, "PAN", keyPan, -64, 63)
-	u.octave = gui.NewKnob(gui.KnobBipolar, "OCTAVE", keyOctave, -3, 3)
+	u.level = widget.NewKnob(widget.KnobMinMax, "LEVEL", keyLevel, 0, 127)
+	u.pan = widget.NewKnob(widget.KnobPan, "PAN", keyPan, -64, 63)
+	u.octave = widget.NewKnob(widget.KnobBipolar, "OCTAVE", keyOctave, -3, 3)
 	u.level.OnChange = func(v int) { u.send(keyLevel, v) }
 	u.pan.OnChange = func(v int) { u.send(keyPan, v) }
 	u.octave.OnChange = func(v int) { u.send(keyOctave, v) }
-	u.env = gui.NewEnvelope("PITCH ENV T1", envTimeKeys, envLevelKeys)
+	u.env = widget.NewEnvelope("PITCH ENV T1", envTimeKeys, envLevelKeys)
 	u.env.OnChange = func(timeKey string, timeVal int, levelKey string, levelVal int) {
 		u.send(timeKey, timeVal)
 		u.send(levelKey, levelVal)
@@ -293,14 +303,14 @@ drained:
 				u.mu.Lock()
 				s := u.status
 				u.mu.Unlock()
-				cell := gtx.Dp(gui.FontCellDp)
-				sz := gui.PixelTextSize(s, cell)
+				cell := gtx.Dp(widget.FontCellDp)
+				sz := widget.PixelTextSize(s, cell)
 				x := (gtx.Constraints.Max.X - sz.X) / 2
 				if x < 0 {
 					x = 0
 				}
 				var d layout.Dimensions
-				gui.Offset(gtx, x, 0, func() { d = gui.DrawPixelText(gtx, s, cell) })
+				widget.Offset(gtx, x, 0, func() { d = widget.DrawPixelText(gtx, s, cell) })
 				return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X, Y: d.Size.Y + gtx.Dp(unit.Dp(10))}}
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {

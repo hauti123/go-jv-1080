@@ -65,8 +65,14 @@ func main() {
 		fatal("cannot open MIDI device: %v", err)
 	}
 	defer dev.Close()
-	// Log all incoming and outgoing raw messages in hex.
+	// Log all incoming and outgoing raw messages in hex (default on;
+	// disable per direction with LOG_MIDI_RX=0 / LOG_MIDI_TX=0).
+	logRX := midi.LogEnabled("RX")
+	logTX := midi.LogEnabled("TX")
 	dev.SetLogger(func(direction string, msg []byte) {
+		if direction == "RX" && !logRX || direction == "TX" && !logTX {
+			return
+		}
 		fmt.Printf("%s: [%s]\n", direction, message.Hex(msg))
 	})
 

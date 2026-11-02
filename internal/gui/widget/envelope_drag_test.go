@@ -1,6 +1,8 @@
-package gui
+package widget
 
 import (
+	"math"
+
 	"testing"
 
 	"gioui.org/f32"
@@ -182,7 +184,7 @@ func TestDragFrameSwitchSkipped(t *testing.T) {
 	// frame switch event
 	pos = f32.Pt(100-2*float32(w), 50-2*float32(h)) // frame switch: delta beyond widget size
 	dx, dy := pos.X-e.lastDrag.X, pos.Y-e.lastDrag.Y
-	if absF(dx) > float32(w) || absF(dy) > float32(h) {
+	if float32(math.Abs(float64(dx))) > float32(w) || float32(math.Abs(float64(dy))) > float32(h) {
 		e.lastDrag = pos // skipped, re-anchored
 	} else {
 		t.Fatal("expected frame switch to be detected")
@@ -211,7 +213,7 @@ func TestDragSmallDeltasNotLost(t *testing.T) {
 	for k := 0; k < 100; k++ {
 		e.dragBy(i, 1, 0, iw, ih)
 	}
-	want := 10 + int(roundF(100.0/iw*508)) // 10 + 62 = 72
+	want := 10 + int(float32(math.Round(float64(100.0/iw*508)))) // 10 + 62 = 72
 	if e.times[i] != want {
 		t.Errorf("100x1px drag: t=%d, want %d (no rounding loss)", e.times[i], want)
 	}
@@ -221,7 +223,7 @@ func TestDragSmallDeltasNotLost(t *testing.T) {
 	for k := 0; k < 100; k++ {
 		e.dragBy(i, 0, -1, iw, ih)
 	}
-	wantL := int(roundF(100.0 / ih * 126)) // 56
+	wantL := int(float32(math.Round(float64(100.0 / ih * 126)))) // 56
 	if e.levels[i] != wantL {
 		t.Errorf("100x1px up drag: l=%d, want %d", e.levels[i], wantL)
 	}
@@ -240,7 +242,7 @@ func TestDragDeltaScaledByPxPerDp(t *testing.T) {
 	// one event of +10 logical dp = +17.5 physical px
 	dx := float32(10) * ppdp
 	e.dragBy(i, dx, 0, iw, ih)
-	want := 10 + int(roundF(17.5/iw*508))
+	want := 10 + int(float32(math.Round(float64(17.5/iw*508))))
 	if e.times[i] != want {
 		t.Errorf("t after +10dp at scale %.2f: %d, want %d", ppdp, e.times[i], want)
 	}

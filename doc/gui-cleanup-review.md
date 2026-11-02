@@ -1,8 +1,16 @@
 # GUI cleanup — review of planned changes and code smells
 
-Status: **proposal only, no code changed yet.** This document records the
-planned refactor and the code smells found during review so they can be
-reviewed before implementation.
+Status: **implemented** (planned refactor of section 1 applied, plus the
+fixes decided in review): widget debug logging is gated by `LOG_GUI_WIDGETS`,
+the LED colors have a single definition in the theme, the `Offset`/`offset`
+wrapper pair is collapsed, `Envelope.Layout` is split into geometry / event /
+draw helpers (the mouse-to-point drag translation is unchanged),
+raw MIDI logging is gated by `LOG_MIDI_RX` / `LOG_MIDI_TX` (default on),
+all clamp helpers (gui, `internal/jv1080`, `cmd/gui-proto`) are migrated to
+`internal/util.Clamp`, `cmd/gui-proto` is kept, and the knob double-click
+reset now goes to zero (the center for pan/bipolar knobs). The smell
+register below stays recorded; the items not covered above are still
+deferred to a later pass.
 
 Scope reviewed: `internal/gui` (all files), its only consumer
 `cmd/jv1080-gui`, the duplicated clamp helpers in `internal/jv1080`, and

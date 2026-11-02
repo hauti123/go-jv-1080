@@ -18,7 +18,7 @@ device parameter through a path-like key string (e.g.
                 │ uses (knob.Key strings only, no addresses)
                 ▼
 ┌───────────────────────────────┐
-│  internal/gui (widgets)       │
+│  internal/gui/widget (widgets)│
 │  • Knob gadget (3 styles,     │
 │    each with a Key field)     │
 │  • Envelope editor (4 points, │
@@ -133,6 +133,7 @@ syntax (`set patch tvf tone 2 cutoff 100`) onto keys.
 | `internal/midi/message` | Individual MIDI messages as structs, serializable to/from byte streams (RQ1, DT1, CC, PC, NoteOn, identity). |
 | `internal/midi/sysex`, `internal/midi/controlchange` | SysEx-level and control-change helpers on top of `message`. |
 | `internal/jv1080` | JV-1080 parameter address map, `Patch`/`Performance` models and the high-level `Client` (dumps, single reads, single-parameter writes, store). |
-| `internal/gui` | GUI widgets: `Knob` (with `Key` binding), 5x7 LED font, MK-II theme. No device imports. |
+| `internal/gui/widget` | GUI widgets: `Knob` (with `Key` binding), `Envelope` editor, 5x7 LED font, MK-II theme. No device imports. |
+| `internal/util` | Shared helpers: generic `Clamp[T]`, env-flag parsing (`EnvFlag`). |
 | `cmd/jv1080-gui` | Sample GUI app (level/pan/octave knobs). |
 | `cmd/jv1080-cli` | Command line utility for raw MIDI inspection and patch manipulation. |
