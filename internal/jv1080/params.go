@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"go-jv-1080/internal/midi/message"
+	"go-jv-1080/internal/util"
 )
 
 // Parameter keys are path-like strings addressed to the device layer, e.g.
@@ -348,7 +349,7 @@ func (p Param) EncodeValue(v any) ([]byte, error) {
 		b := make([]byte, 12)
 		for i := range b {
 			if i < len(s) {
-				b[i] = clampByte(int(s[i]), 32, 127)
+				b[i] = byte(util.Clamp(int(s[i]), 32, 127))
 			} else {
 				b[i] = ' '
 			}
@@ -409,7 +410,7 @@ func panToRaw(v any) (int, error) {
 // rawToPan converts a raw 0-127 wire byte to the signed UI pan value
 // -64..+63 (0 = C, -64 = L64).
 func rawToPan(raw int) int {
-	return clamp(raw, 0, 127) - 64
+	return util.Clamp(raw, 0, 127) - 64
 }
 
 // panToUI converts a pan UI value (signed int -64..+63, or "C"/"Lxx"/

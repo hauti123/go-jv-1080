@@ -1,14 +1,16 @@
-package gui
+package widget
 
 import (
 	"image"
-	"log"
+	"math"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
+
+	"go-jv-1080/internal/util"
 )
 
 // Envelope is the 4-point envelope editor of the gui-proto ENV-4 GENERATOR
@@ -85,8 +87,8 @@ func (e *Envelope) SetPoint(i int, timeVal, levelVal int) {
 	if i < 0 || i > 3 {
 		return
 	}
-	e.times[i] = clampInt(timeVal, 0, 127)
-	e.levels[i] = clampInt(levelVal, -63, 63)
+	e.times[i] = util.Clamp(timeVal, 0, 127)
+	e.levels[i] = util.Clamp(levelVal, -63, 63)
 	e.relayout()
 }
 
@@ -94,8 +96,8 @@ func (e *Envelope) SetPoint(i int, timeVal, levelVal int) {
 // t1..t4, levels l1..l4).
 func (e *Envelope) SetAll(times, levels [4]int) {
 	for i := 0; i < 4; i++ {
-		e.times[i] = clampInt(times[i], 0, 127)
-		e.levels[i] = clampInt(levels[i], -63, 63)
+		e.times[i] = util.Clamp(times[i], 0, 127)
+		e.levels[i] = util.Clamp(levels[i], -63, 63)
 	}
 	e.relayout()
 }
@@ -112,113 +114,118 @@ func (e *Envelope) Point(i int) (timeVal, levelVal int) {
 func (e *Envelope) relayout() {
 	cum := 0
 	for i := 0; i < 4; i++ {
-		cum += clampInt(e.times[i], 0, 127)
-		e.points[i].X = clampf01(float32(cum) / envMaxTime)
-		e.points[i].Y = clampf01((float32(clampInt(e.levels[i], -63, 63)) + 63) / 126)
-		log.Printf("ENV relayout: point %d cum=%d -> x=%.4f (%.1f px of 508), level=%d -> y=%.4f",
-			i, cum, e.points[i].X, e.points[i].X*envMaxTime, clampInt(e.levels[i], -63, 63), e.points[i].Y)
+		cum += util.Clamp(e.times[i], 0, 127)
+		e.points[i].X = util.Clamp(float32(cum)/envMaxTime, 0, 1)
+		e.points[i].Y = util.Clamp((float32(util.Clamp(e.levels[i], -63, 63))+63)/126, 0, 1)
+		debugf("ENV relayout: point %d cum=%d -> x=%.4f (%.1f px of 508), level=%d -> y=%.4f",
+			i, cum, e.points[i].X, e.points[i].X*envMaxTime, util.Clamp(e.levels[i], -63, 63), e.points[i].Y)
 	}
-}
-
-func absF(v float32) float32 {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
-func roundF(v float32) float32 {
-	if v < 0 {
-		return float32(int(v - 0.5))
-	}
-	return float32(int(v + 0.5))
 }
 
 // Active returns the index of the last touched point.
 func (e *Envelope) Active() int { return e.active }
 
-func clampf01(v float32) float32 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
-}
-
-func clampf(v, lo, hi float32) float32 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
 // envDp is the nominal height of the envelope screen in dp (gui-proto 170).
 const envDp = 150
 
-// Layout lays out the envelope editor and handles its input.
-func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
+// envGeom holds the pixel geometry of the envelope widget: the total size
+// (w, h, total) and the inner screen rectangle (pads, iw, ih, baseY).
+// Everything is in physical pixels.
+type envGeom struct {
+	w, h, total      int
+	padX, padT, padB float32
+	iw, ih, baseY    float32
+}
+
+// px maps a normalized point (x: cumulative time 0..1, y: level 0..1 with
+// top = +63) to screen pixels.
+func (g envGeom) px(p f32.Point) f32.Point {
+	return f32.Pt(g.padX+p.X*g.iw, g.padT+(1-p.Y)*g.ih)
+}
+
+// envGeomOf computes the pixel geometry from the current constraints.
+func envGeomOf(gtx layout.Context) envGeom {
 	w := gtx.Constraints.Max.X
 	h := gtx.Dp(envDp)
 	if w < gtx.Dp(120) {
 		w = gtx.Dp(120)
 	}
 	total := h + gtx.Dp(10) // title row below the screen
-	gtx.Constraints = layout.Exact(image.Pt(w, total))
 
 	// Everything below (drawing and pointer events) is in physical pixels.
 	// pxPerDp > 1 on HiDPI means 1 logical dp is several physical px; pointer
 	// deltas arrive in logical units (dp) after the router's inverse scale,
 	// so convert drag deltas dp->px with PxPerDp to match the pixel geometry.
-	log.Printf("ENV layout: w=%d h=%d total=%d pxPerDp=%.2f", w, h, total, gtx.Metric.PxPerDp)
-	padX := float32(gtx.Dp(8))
-	padT := float32(gtx.Dp(8))
-	padB := float32(gtx.Dp(14))
-	iw := float32(w) - 2*padX
-	ih := float32(h) - padT - padB
-	baseY := padT + ih
-	px := func(p f32.Point) f32.Point {
-		return f32.Pt(padX+p.X*iw, padT+(1-p.Y)*ih)
+	debugf("ENV layout: w=%d h=%d total=%d pxPerDp=%.2f", w, h, total, gtx.Metric.PxPerDp)
+	g := envGeom{
+		w: w, h: h, total: total,
+		padX: float32(gtx.Dp(8)),
+		padT: float32(gtx.Dp(8)),
+		padB: float32(gtx.Dp(14)),
 	}
+	g.iw = float32(w) - 2*g.padX
+	g.ih = float32(h) - g.padT - g.padB
+	g.baseY = g.padT + g.ih
+	return g
+}
 
+// Layout lays out the envelope editor and handles its input.
+func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
+	g := envGeomOf(gtx)
+	gtx.Constraints = layout.Exact(image.Pt(g.w, g.total))
+
+	e.drawScreen(gtx, g)
+	e.processEvents(gtx, g)
+	e.drawHandles(gtx, g)
+
+	// Mandatory title below the screen.
+	cell := gtx.Dp(FontCellDp)
+	ts := PixelTextSize(e.Title, cell)
+	Offset(gtx, (g.w-ts.X)/2, g.h+1, func() { DrawPixelText(gtx, e.Title, cell) })
+
+	return layout.Dimensions{Size: image.Pt(g.w, g.total)}
+}
+
+// drawScreen draws the screen chrome, the grid, the area fill, the
+// envelope line and the origin marker.
+func (e *Envelope) drawScreen(gtx layout.Context, g envGeom) {
 	// Screen chrome (gui-proto ENV-4 screen).
-	fillRect(gtx, 0, 0, float32(w), float32(h), rgb(0x6F6D66))
-	fillRect(gtx, 2, 2, float32(w)-4, float32(h)-4, rgb(0x030503))
+	fillRect(gtx, 0, 0, float32(g.w), float32(g.h), rgb(0x6F6D66))
+	fillRect(gtx, 2, 2, float32(g.w)-4, float32(g.h)-4, rgb(0x030503))
 
 	// Grid.
 	for i := 0; i <= 8; i++ {
-		x := padX + iw*float32(i)/8
-		strokeLine(gtx, f32.Pt(x, padT), f32.Pt(x, baseY), 1, rgb(ledDim))
+		x := g.padX + g.iw*float32(i)/8
+		strokeLine(gtx, f32.Pt(x, g.padT), f32.Pt(x, g.baseY), 1, rgb(ledDim))
 	}
 	for i := 0; i <= 4; i++ {
-		y := padT + ih*float32(i)/4
-		strokeLine(gtx, f32.Pt(padX, y), f32.Pt(padX+iw, y), 1, rgb(ledDim))
+		y := g.padT + g.ih*float32(i)/4
+		strokeLine(gtx, f32.Pt(g.padX, y), f32.Pt(g.padX+g.iw, y), 1, rgb(ledDim))
 	}
 
 	// Area fill + envelope line.
-	coords := []f32.Point{f32.Pt(padX, baseY)}
+	coords := []f32.Point{f32.Pt(g.padX, g.baseY)}
 	for _, p := range e.points {
-		coords = append(coords, px(p))
+		coords = append(coords, g.px(p))
 	}
 	area := append([]f32.Point{}, coords...)
-	area = append(area, f32.Pt(coords[len(coords)-1].X, baseY), f32.Pt(padX, baseY))
+	area = append(area, f32.Pt(coords[len(coords)-1].X, g.baseY), f32.Pt(g.padX, g.baseY))
 	areaCol := rgb(ledLit)
 	areaCol.A = 18
 	fillPolygon(gtx, area, areaCol)
 	strokePolyline(gtx, coords, 2.5, rgb(ledLit))
 
 	// Origin marker.
-	fillRect(gtx, padX-3, baseY-3, 6, 6, rgb(0x2F7F3A))
+	fillRect(gtx, g.padX-3, g.baseY-3, 6, 6, rgb(0x2F7F3A))
+}
 
+// processEvents declares the screen tag and handles press/drag/release.
+func (e *Envelope) processEvents(gtx layout.Context, g envGeom) {
 	// One tag for the whole screen, declared over the full area. All
 	// events (press/drag/release) are received on this single tag, whose
 	// coordinate system is the envelope's own, so pe.Position is directly
 	// comparable with the handle positions.
-	screen := clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops)
+	screen := clip.Rect{Max: image.Pt(g.w, g.h)}.Push(gtx.Ops)
 	event.Op(gtx.Ops, e)
 	screen.Pop()
 
@@ -242,14 +249,14 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 			// pick the nearest handle
 			best, bestD := 0, float32(1<<30)
 			for i := range e.points {
-				p := px(e.points[i])
+				p := g.px(e.points[i])
 				d := (pe.Position.X-p.X)*(pe.Position.X-p.X) + (pe.Position.Y-p.Y)*(pe.Position.Y-p.Y)
 				if d < bestD {
 					best, bestD = i, d
 				}
 			}
-			log.Printf("ENV press: pos=(%.1f,%.1f) -> handle %d (dist %.1f), handle px=%v",
-				pe.Position.X, pe.Position.Y, best, bestD, px(e.points[best]))
+			debugf("ENV press: pos=(%.1f,%.1f) -> handle %d (dist %.1f), handle px=%v",
+				pe.Position.X, pe.Position.Y, best, bestD, g.px(e.points[best]))
 			e.beginDrag(best, pe.PointerID, pe.Position)
 			gtx.Execute(pointer.GrabCmd{Tag: e, ID: pe.PointerID})
 			e.active = best
@@ -270,25 +277,27 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 			// A one-time coordinate-frame switch (e.g. when the pointer grab
 			// takes effect) shows up as an implausibly large delta; skip it
 			// and re-anchor instead of applying it.
-			if absF(dx) > float32(w) || absF(dy) > float32(h) {
-				log.Printf("ENV drag: handle=%d frame-switch skipped delta=(%.1f,%.1f)", e.dragIdx, dx, dy)
+			if float32(math.Abs(float64(dx))) > float32(g.w) || float32(math.Abs(float64(dy))) > float32(g.h) {
+				debugf("ENV drag: handle=%d frame-switch skipped delta=(%.1f,%.1f)", e.dragIdx, dx, dy)
 				e.lastDrag = pe.Position
 				continue
 			}
 			e.lastDrag = pe.Position
-			e.dragBy(e.dragIdx, dx, dy, iw, ih)
+			e.dragBy(e.dragIdx, dx, dy, g.iw, g.ih)
 			e.emit(e.dragIdx)
 		case pointer.Release, pointer.Cancel:
-			log.Printf("ENV release: pos=(%.1f,%.1f) dragging=%v", pe.Position.X, pe.Position.Y, e.dragging)
+			debugf("ENV release: pos=(%.1f,%.1f) dragging=%v", pe.Position.X, pe.Position.Y, e.dragging)
 			if pe.PointerID == e.pointerID {
 				e.dragging = false
 			}
 		}
 	}
+}
 
-	// Handle visuals.
+// drawHandles draws the four draggable handles with their LED labels.
+func (e *Envelope) drawHandles(gtx layout.Context, g envGeom) {
 	for i := range e.points {
-		p := px(e.points[i])
+		p := g.px(e.points[i])
 		fillRect(gtx, p.X-6, p.Y-6, 12, 12, rgb(0x0A0F0A))
 		col := rgb(ledLit)
 		if i == e.active {
@@ -305,13 +314,6 @@ func (e *Envelope) Layout(gtx layout.Context, th *Theme) layout.Dimensions {
 		}
 		Offset(gtx, int(p.X)-lsz.X/2, ty, func() { DrawPixelText(gtx, lbl, cell) })
 	}
-
-	// Mandatory title below the screen.
-	cell := gtx.Dp(FontCellDp)
-	ts := PixelTextSize(e.Title, cell)
-	Offset(gtx, (w-ts.X)/2, h+1, func() { DrawPixelText(gtx, e.Title, cell) })
-
-	return layout.Dimensions{Size: image.Pt(w, total)}
 }
 
 // beginDrag starts dragging handle i: records the pointer and the press
@@ -324,7 +326,7 @@ func (e *Envelope) beginDrag(i int, id pointer.ID, pos f32.Point) {
 	e.accTF, e.accLF = 0, 0
 	e.startTimes = e.times
 	e.startLevels = e.levels
-	log.Printf("ENV drag-begin: handle=%d pointer=%v press=(%.1f,%.1f) times=%v levels=%v",
+	debugf("ENV drag-begin: handle=%d pointer=%v press=(%.1f,%.1f) times=%v levels=%v",
 		i, id, pos.X, pos.Y, e.times, e.levels)
 }
 
@@ -347,11 +349,11 @@ func (e *Envelope) dragBy(i int, dx, dy float32, iw, ih float32) {
 	e.accTF += dx / iw * envMaxTime
 	e.accLF += -dy / ih * 126
 	oldT, oldL := e.times[i], e.levels[i]
-	e.setTime(i, e.startTimes[i]+int(roundF(e.accTF)))
-	e.levels[i] = clampInt(e.startLevels[i]+int(roundF(e.accLF)), -63, 63)
+	e.setTime(i, e.startTimes[i]+int(float32(math.Round(float64(e.accTF)))))
+	e.levels[i] = util.Clamp(e.startLevels[i]+int(float32(math.Round(float64(e.accLF)))), -63, 63)
 	e.relayout()
-	log.Printf("ENV drag: handle=%d delta=(%.1f,%.1f) acc=(%.2f,%.2f)->(%d,%d) iw=%.1f ih=%.1f | t%d %d->%d l%d %d->%d | times=%v levels=%v | points=%v",
-		i, dx, dy, e.accTF, e.accLF, int(roundF(e.accTF)), int(roundF(e.accLF)), iw, ih,
+	debugf("ENV drag: handle=%d delta=(%.1f,%.1f) acc=(%.2f,%.2f)->(%d,%d) iw=%.1f ih=%.1f | t%d %d->%d l%d %d->%d | times=%v levels=%v | points=%v",
+		i, dx, dy, e.accTF, e.accLF, int(float32(math.Round(float64(e.accTF)))), int(float32(math.Round(float64(e.accLF)))), iw, ih,
 		i, oldT, e.times[i], i, oldL, e.levels[i], e.times, e.levels, e.points)
 }
 
@@ -361,15 +363,15 @@ func (e *Envelope) dragBy(i int, dx, dy float32, iw, ih float32) {
 // same delta (their own segments keep their length). The total span is
 // kept within envMaxTime by clamping v against the sum of the others.
 func (e *Envelope) setTime(i, v int) {
-	v = clampInt(v, 0, 127)
+	v = util.Clamp(v, 0, 127)
 	others := 0
 	for j := 0; j < 4; j++ {
 		if j != i {
 			others += e.times[j]
 		}
 	}
-	v = clampInt(v, 0, envMaxTime-others)
-	log.Printf("ENV setTime: handle=%d requested=%d clamped=%d (others sum=%d) old=%d", i, v, v, others, e.times[i])
+	v = util.Clamp(v, 0, envMaxTime-others)
+	debugf("ENV setTime: handle=%d requested=%d clamped=%d (others sum=%d) old=%d", i, v, v, others, e.times[i])
 	e.times[i] = v
 	// following segments are untouched, so relayout() shifts their
 	// cumulative pixel positions by the same delta automatically
@@ -381,6 +383,6 @@ func (e *Envelope) emit(i int) {
 		return
 	}
 	t, l := e.Point(i)
-	log.Printf("ENV emit: handle=%d -> %s=%d %s=%d", i, e.TimeKeys[i], t, e.LevelKeys[i], l)
+	debugf("ENV emit: handle=%d -> %s=%d %s=%d", i, e.TimeKeys[i], t, e.LevelKeys[i], l)
 	e.OnChange(e.TimeKeys[i], t, e.LevelKeys[i], l)
 }

@@ -1,4 +1,4 @@
-package gui
+package widget
 
 import (
 	"image"
@@ -129,11 +129,8 @@ func rotated(gtx layout.Context, cx, cy, deg float64, draw func()) {
 	stack.Pop()
 }
 
-// Offset runs draw() under a scoped translation (exported for apps).
-func Offset(gtx layout.Context, x, y int, draw func()) { offset(gtx, x, y, draw) }
-
-// offset runs draw() under a scoped translation.
-func offset(gtx layout.Context, x, y int, draw func()) {
+// Offset runs draw() under a scoped translation.
+func Offset(gtx layout.Context, x, y int, draw func()) {
 	stack := op.Affine(f32.Affine2D{}.Offset(f32.Pt(float32(x), float32(y)))).Push(gtx.Ops)
 	draw()
 	stack.Pop()

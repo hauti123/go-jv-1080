@@ -1,4 +1,4 @@
-package gui
+package widget
 
 import (
 	"math"
@@ -68,9 +68,6 @@ func TestKnobFormatBipolar(t *testing.T) {
 		}
 	}
 	// 0 must map to 12 o'clock
-	if k.center() != 0 {
-		t.Errorf("center() = %d, want 0", k.center())
-	}
 	k.Set(0)
 	if math.Abs(k.angle()) > 1e-9 {
 		t.Errorf("bipolar angle at 0 = %v, want 0 (12 o'clock)", k.angle())

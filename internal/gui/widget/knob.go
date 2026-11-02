@@ -1,9 +1,10 @@
-package gui
+package widget
 
 import (
 	"image"
 	"image/color"
 	"math"
+	"strconv"
 	"time"
 
 	"gioui.org/f32"
@@ -12,6 +13,8 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
+
+	"go-jv-1080/internal/util"
 )
 
 // KnobStyle selects how the value of a Knob maps onto the scale.
@@ -42,7 +45,8 @@ const (
 // layer. Values passed to OnChange are the UI values as displayed.
 //
 // Interaction (same as gui-proto): drag up/down or left/right to dial,
-// mouse wheel for steps, Shift = fine, double-click resets to Min.
+// mouse wheel for steps, Shift = fine, double-click resets to zero (the
+// center for pan/bipolar knobs).
 type Knob struct {
 	Style KnobStyle
 	Title string // mandatory, written below the scale
@@ -83,7 +87,7 @@ func (k *Knob) Value() int { return k.value }
 // call OnChange; callers that apply the value to a device should do so
 // themselves.
 func (k *Knob) Set(v int) {
-	k.value = clampInt(v, k.Min, k.Max)
+	k.value = util.Clamp(v, k.Min, k.Max)
 }
 
 // SetRange changes the value range, clamping the current value.
@@ -101,7 +105,7 @@ func (k *Knob) SetRange(min, max int) {
 // the left (negative angles) and positive values to the right.
 func (k *Knob) angle() float64 {
 	if k.Style == KnobBipolar || k.Style == KnobPan {
-		v := clampInt(k.value, k.Min, k.Max) // UI value, centered on 0
+		v := util.Clamp(k.value, k.Min, k.Max) // UI value, centered on 0
 		if v >= 0 {
 			span := k.Max
 			if span <= 0 {
@@ -124,7 +128,7 @@ func angleOf(min, max, v int) float64 {
 	if span <= 0 {
 		return MinAngle
 	}
-	return MinAngle + (MaxAngle-MinAngle)*float64(clampInt(v, min, max)-min)/float64(span)
+	return MinAngle + (MaxAngle-MinAngle)*float64(util.Clamp(v, min, max)-min)/float64(span)
 }
 
 // formatValue renders the value according to the knob style. The knob
@@ -134,9 +138,9 @@ func (k *Knob) formatValue() string {
 	switch k.Style {
 	case KnobBipolar:
 		if k.value >= 0 {
-			return "+" + itoa(k.value)
+			return "+" + strconv.Itoa(k.value)
 		}
-		return itoa(k.value)
+		return strconv.Itoa(k.value)
 	case KnobPan:
 		// The JV-1080 pan scale is L64..L1, C, R1..R63 (wire 0..127,
 		// 64 = C). The knob value is the signed UI unit: 0 = C,
@@ -145,23 +149,12 @@ func (k *Knob) formatValue() string {
 		case k.value == 0:
 			return "C"
 		case k.value < 0:
-			return "L" + itoa(-k.value)
+			return "L" + strconv.Itoa(-k.value)
 		default:
-			return "R" + itoa(k.value)
+			return "R" + strconv.Itoa(k.value)
 		}
 	default:
-		return itoa(k.value)
-	}
-}
-
-// center returns the value that maps to 12 o'clock: 0 for bipolar and pan
-// knobs (their UI ranges are centered on 0), the minimum for min-max.
-func (k *Knob) center() int {
-	switch k.Style {
-	case KnobBipolar, KnobPan:
-		return 0
-	default:
-		return k.Min
+		return strconv.Itoa(k.value)
 	}
 }
 
@@ -218,7 +211,7 @@ func (k *Knob) processEvents(gtx layout.Context) {
 				continue
 			}
 			if e.Time-k.lastPress < dblClick {
-				k.set(k.Min) // double-click resets to minimum
+				k.set(0) // double-click resets to zero (center for pan/bipolar)
 			} else {
 				k.dragging = true
 				k.pointerID = e.PointerID
@@ -261,7 +254,7 @@ func (k *Knob) processEvents(gtx layout.Context) {
 
 // set clamps and applies a new value and reports it through OnChange.
 func (k *Knob) set(v int) {
-	nv := clampInt(v, k.Min, k.Max)
+	nv := util.Clamp(v, k.Min, k.Max)
 	if nv == k.value {
 		return
 	}
@@ -310,21 +303,21 @@ func (k *Knob) draw(gtx layout.Context, th *Theme, size float64) {
 	val := k.formatValue()
 	cell := gtx.Dp(FontCellDp)
 	vsz := PixelTextSize(val, cell)
-	offset(gtx, int(cx)-vsz.X/2, int(cy)-vsz.Y/2, func() {
+	Offset(gtx, int(cx)-vsz.X/2, int(cy)-vsz.Y/2, func() {
 		DrawPixelText(gtx, val, cell)
 	})
 
 	// optional unit in the free space between the scale ends (bottom gap)
 	if k.Unit != "" {
 		us := PixelTextSize(k.Unit, cell)
-		offset(gtx, int(cx)-us.X/2, int(cy+size*0.30), func() {
+		Offset(gtx, int(cx)-us.X/2, int(cy+size*0.30), func() {
 			DrawPixelText(gtx, k.Unit, cell)
 		})
 	}
 
 	// mandatory title below the scale
 	ts := PixelTextSize(k.Title, cell)
-	offset(gtx, int(cx)-ts.X/2, int(size)+1, func() {
+	Offset(gtx, int(cx)-ts.X/2, int(size)+1, func() {
 		DrawPixelText(gtx, k.Title, cell)
 	})
 }
@@ -346,36 +339,4 @@ func litRange(k *Knob) (from, to float64) {
 
 func strokeCircle(gtx layout.Context, cx, cy, r float64, width float32, col color.NRGBA) {
 	strokeArc(gtx, cx, cy, r, 0, 360, width, col)
-}
-
-func clampInt(v, min, max int) int {
-	if v < min {
-		return min
-	}
-	if v > max {
-		return max
-	}
-	return v
-}
-
-func itoa(v int) string {
-	if v == 0 {
-		return "0"
-	}
-	neg := v < 0
-	if neg {
-		v = -v
-	}
-	var buf [20]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

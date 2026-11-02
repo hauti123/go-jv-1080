@@ -1,4 +1,4 @@
-package gui
+package widget
 
 import (
 	"image"
@@ -53,12 +53,6 @@ var pixFont = map[string][7]string{
 	".": {"00000", "00000", "00000", "00000", "00000", "00110", "00110"},
 }
 
-// LED colors of the DC-90 sample.
-const (
-	ledLit = 0x39FF70 // bright green
-	ledDim = 0x0B3315 // unlit dot grid
-)
-
 // PixelTextSize returns the pixel size of s rendered with the dot-matrix
 // font at the given cell size in pixels.
 func PixelTextSize(s string, cellPx int) image.Point {
@@ -100,6 +94,6 @@ func ledFrame(gtx layout.Context, s string, cell unit.Dp) layout.Dimensions {
 	total := image.Pt(sz.X+2*pad, sz.Y+2*pad)
 	fillRect(gtx, 0, 0, float32(total.X), float32(total.Y), rgb(0x6F6D66))
 	fillRect(gtx, 2, 2, float32(total.X-4), float32(total.Y-4), rgb(0x050705))
-	offset(gtx, pad, pad, func() { DrawPixelText(gtx, s, cellPx) })
+	Offset(gtx, pad, pad, func() { DrawPixelText(gtx, s, cellPx) })
 	return layout.Dimensions{Size: total}
 }
